@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es" data-theme="dark">
+<html lang="es" data-style="noche" data-view="list">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
@@ -14,28 +14,95 @@
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+
+<!-- Fondo del inicio: vivo y suave -->
+<div id="bg-home" class="bg" aria-hidden="true">
+  <i class="b b1"></i><i class="b b2"></i><i class="b b3"></i><i class="ring"></i>
+  <i class="photo"></i><i class="dim"></i><i class="grain"></i>
+</div>
+<!-- Fondo del bloc: mismos colores, más quieto -->
+<div id="bg-editor" class="bg" aria-hidden="true">
+  <i class="glow"></i><i class="photo"></i><i class="dim"></i><i class="grain"></i>
+</div>
+
 <div id="app">
+
+  <!-- Barra de arriba (cambia según la pantalla) -->
+  <header class="topbar" id="topbar">
+    <button id="btn-editor-back" class="icon-btn" data-icon="back" aria-label="Volver a mis notas" hidden></button>
+    <button id="btn-folder-back" class="icon-btn" data-icon="back" aria-label="Volver" hidden></button>
+    <h1 id="brand" class="brand">
+      <svg class="brand-mark" width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
+        <rect x="3" y="12" width="4" height="12" rx="2" fill="var(--accent-ink)"/>
+        <rect x="9.5" y="6" width="4" height="18" rx="2" fill="var(--accent-ink)"/>
+        <rect x="16" y="9" width="4" height="15" rx="2" fill="var(--accent-ink)"/>
+        <rect x="22.5" y="15" width="4" height="9" rx="2" fill="var(--accent-ink)"/>
+      </svg>
+      <span>Banger Maker</span>
+    </h1>
+    <h1 id="folder-name" class="folder-name" hidden></h1>
+    <input id="note-title" class="title-input" type="text" placeholder="Título" maxlength="120" autocomplete="off" enterkeyhint="next" hidden>
+    <span id="top-spacer" class="spacer"></span>
+    <button id="sync-pill" class="pill" data-state="off">Sin nube</button>
+    <button id="btn-folder-menu" class="icon-btn" data-icon="more" aria-label="Opciones de la carpeta" hidden></button>
+    <button id="btn-editor-menu" class="icon-btn" data-icon="more" aria-label="Más opciones" hidden></button>
+    <button id="btn-settings" class="icon-btn" data-icon="sliders" aria-label="Ajustes"></button>
+  </header>
+
+  <!-- Reproductor único: no se reinicia al cambiar de pantalla -->
+  <div id="strip" class="strip" hidden>
+    <div id="np-bar" class="np-bar" hidden>
+      <span class="ic np-icon" data-icon="music" data-size="16"></span>
+      <span id="np-title" class="np-title"></span>
+      <button id="np-change" class="np-btn">Cambiar</button>
+      <button id="np-close" class="icon-btn sm" data-icon="x" data-size="18" aria-label="Cerrar el beat"></button>
+    </div>
+
+    <button id="beat-empty" class="beat-empty">
+      <span class="ic beat-empty-icon" data-icon="music"></span>
+      <span><b>Elegir un beat de YouTube</b><small>Pegá un link, buscá o compartilo desde YouTube</small></span>
+    </button>
+
+    <div id="beat-wrap" class="beat-wrap" hidden>
+      <div id="player-box" class="player-box">
+        <div id="yt-holder"></div>
+        <div id="player-msg" class="player-msg" hidden></div>
+      </div>
+      <div class="controls">
+        <div class="time-row"><span id="t-cur">0:00</span><span id="t-dur">0:00</span></div>
+        <div class="seek">
+          <div class="seek-track">
+            <div id="seek-loop" class="seek-loop" hidden></div>
+            <div id="seek-fill" class="seek-fill"></div>
+            <div id="seek-thumb" class="seek-thumb"></div>
+          </div>
+          <input id="seek-input" class="seek-input" type="range" min="0" max="1" step="any" value="0" aria-label="Posición del beat">
+        </div>
+        <div class="row3">
+          <button id="c-back" class="cbtn" aria-label="Retroceder 10 segundos">−10</button>
+          <button id="c-play" class="cbtn play" aria-label="Reproducir"></button>
+          <button id="c-fwd" class="cbtn" aria-label="Adelantar 10 segundos">+10</button>
+        </div>
+        <div class="row3">
+          <button id="c-a" class="cbtn short" aria-label="Marcar inicio del loop">A</button>
+          <button id="c-b" class="cbtn short" aria-label="Marcar final del loop">B</button>
+          <button id="c-clear" class="cbtn short" aria-label="Quitar el loop"><span class="ic" data-icon="x" data-size="16"></span></button>
+        </div>
+        <div class="row-speed">
+          <button id="c-speed" class="cbtn" aria-label="Velocidad">1x</button>
+          <button id="c-mark" class="cbtn mark" aria-label="Marcar el tiempo en la nota"><span class="ic" data-icon="clock" data-size="17"></span>Marcar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="beat-mismatch" class="mismatch" hidden>
+      <span id="mm-text">Esta nota usa otro beat.</span>
+      <button id="btn-swap" class="np-btn">Cambiar al de esta nota</button>
+    </div>
+  </div>
 
   <!-- Lista de notas y carpetas -->
   <section id="view-list" class="view">
-    <header class="topbar">
-      <button id="btn-folder-back" class="icon-btn" data-icon="back" aria-label="Volver" hidden></button>
-      <h1 id="brand" class="brand">
-        <svg class="brand-mark" width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
-          <rect x="3" y="12" width="4" height="12" rx="2" fill="var(--accent)"/>
-          <rect x="9.5" y="6" width="4" height="18" rx="2" fill="var(--accent)"/>
-          <rect x="16" y="9" width="4" height="15" rx="2" fill="var(--accent)"/>
-          <rect x="22.5" y="15" width="4" height="9" rx="2" fill="var(--accent)"/>
-        </svg>
-        <span>Banger Maker</span>
-      </h1>
-      <h1 id="folder-name" class="folder-name" hidden></h1>
-      <span class="spacer"></span>
-      <button id="sync-pill" class="pill" data-state="off">Sin nube</button>
-      <button id="btn-folder-menu" class="icon-btn" data-icon="more" aria-label="Opciones de la carpeta" hidden></button>
-      <button id="btn-settings" class="icon-btn" data-icon="sliders" aria-label="Ajustes"></button>
-    </header>
-
     <div id="search-wrap" class="search" hidden>
       <input id="search" class="field" type="search" placeholder="Buscar en mis notas" autocomplete="off" enterkeyhint="search">
     </div>
@@ -50,53 +117,9 @@
 
   <!-- Editor -->
   <section id="view-editor" class="view" hidden>
-    <header class="topbar">
-      <button id="btn-editor-back" class="icon-btn" data-icon="back" aria-label="Volver a mis notas"></button>
-      <input id="note-title" class="title-input" type="text" placeholder="Título" maxlength="120" autocomplete="off" enterkeyhint="next">
-      <button id="btn-editor-menu" class="icon-btn" data-icon="more" aria-label="Más opciones"></button>
-    </header>
-
-    <div id="strip" class="strip">
-      <button id="beat-empty" class="beat-empty">
-        <span class="ic beat-empty-icon" data-icon="music"></span>
-        <span><b>Elegir un beat de YouTube</b><small>Pegá un link, buscá o compartilo desde YouTube</small></span>
-      </button>
-
-      <div id="beat-wrap" class="beat-wrap" hidden>
-        <div id="player-box" class="player-box">
-          <div id="yt-holder"></div>
-          <div id="player-msg" class="player-msg" hidden></div>
-        </div>
-        <div class="controls">
-          <div class="time-row"><span id="t-cur">0:00</span><span id="t-dur">0:00</span></div>
-          <div class="seek">
-            <div class="seek-track">
-              <div id="seek-loop" class="seek-loop" hidden></div>
-              <div id="seek-fill" class="seek-fill"></div>
-              <div id="seek-thumb" class="seek-thumb"></div>
-            </div>
-            <input id="seek-input" class="seek-input" type="range" min="0" max="1" step="any" value="0" aria-label="Posición del beat">
-          </div>
-          <div class="row3">
-            <button id="c-back" class="cbtn" aria-label="Retroceder 10 segundos">−10</button>
-            <button id="c-play" class="cbtn play" aria-label="Reproducir"></button>
-            <button id="c-fwd" class="cbtn" aria-label="Adelantar 10 segundos">+10</button>
-          </div>
-          <div class="row3">
-            <button id="c-a" class="cbtn short" aria-label="Marcar inicio del loop">A</button>
-            <button id="c-b" class="cbtn short" aria-label="Marcar final del loop">B</button>
-            <button id="c-clear" class="cbtn short" aria-label="Quitar el loop"><span class="ic" data-icon="x" data-size="16"></span></button>
-          </div>
-          <div class="row-speed">
-            <button id="c-speed" class="cbtn" aria-label="Velocidad">1x</button>
-            <button id="c-mark" class="cbtn mark" aria-label="Marcar el tiempo en la nota"><span class="ic" data-icon="clock" data-size="17"></span>Marcar</button>
-          </div>
-        </div>
-      </div>
+    <div class="note-panel">
+      <textarea id="note-body" class="note-body" placeholder="Escribí acá tus barras…" spellcheck="false" autocomplete="off" autocapitalize="sentences"></textarea>
     </div>
-
-    <textarea id="note-body" class="note-body" placeholder="Escribí acá tus barras…" spellcheck="false" autocomplete="off" autocapitalize="sentences"></textarea>
-
     <footer class="editor-foot">
       <button id="beat-chip" class="beat-chip"><span class="ic" data-icon="music" data-size="16"></span><span id="beat-chip-text">Sin beat</span></button>
       <span id="counts" class="counts"></span>

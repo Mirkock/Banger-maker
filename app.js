@@ -2,7 +2,7 @@
 (() => {
 'use strict';
 
-const VERSION = '1.0.0';
+const VERSION = '2.0.0';
 const K = { data: 'bm:data', settings: 'bm:settings', cloud: 'bm:cloud', dirty: 'bm:dirty' };
 const FB_BASE = 'https://www.gstatic.com/firebasejs/10.14.1/';
 const TAPES = ['#ffc93c', '#ff7a8a', '#6fe0b5', '#7fb2ff', '#c79bff', '#ffa95c'];
@@ -86,7 +86,8 @@ const ICONS = {
   cloud: '<path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 10.5 4 4 0 0 1 17.5 18z"/>',
   download: '<path d="M12 4v11M7.5 11l4.5 4.5 4.5-4.5M5 19h14"/>',
   upload: '<path d="M12 16V5M7.5 9L12 4.5 16.5 9M5 19h14"/>',
-  check: '<path d="M5 12.5l4.5 4.5L19 7"/>'
+  check: '<path d="M5 12.5l4.5 4.5L19 7"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-8 9"/>'
 };
 function svg(name, size = 24) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
@@ -106,10 +107,17 @@ function hydrateIcons() {
 let db = lsGet(K.data, null);
 if (!db || !Array.isArray(db.notes) || !Array.isArray(db.folders)) db = { notes: [], folders: [] };
 const dirty = new Set(lsGet(K.dirty, []));
+const storedSettings = lsGet(K.settings, {});
 const settings = Object.assign(
-  { theme: 'dark', font: 'mono', size: 18, ytKey: '', repeat: true },
-  lsGet(K.settings, {})
+  { style: 'noche', calm: false, font: 'mono', size: 18, ytKey: '', repeat: true, dimHome: 0.35, dimEditor: 0.5, bgHome: false, bgEditor: false },
+  storedSettings
 );
+// viene de la versión 1: el tema claro pasa a ser Acuarela
+if (!storedSettings.style && storedSettings.theme) {
+  const light = storedSettings.theme === 'light' || (storedSettings.theme === 'auto' && matchMedia('(prefers-color-scheme: light)').matches);
+  settings.style = light ? 'acuarela' : 'noche';
+}
+delete settings.theme;
 
 const liveNotes = () => db.notes.filter(n => !n.deleted);
 const liveFolders = () => db.folders.filter(f => !f.deleted);
@@ -135,7 +143,7 @@ function touch(item) {
 
 function newNoteObj(folderId) {
   const t = now();
-  return { id: uid(), kind: 'note', folderId: folderId || null, title: '', body: '', beat: null, createdAt: t, updatedAt: t, deleted: false };
+  return { id: uid(), kind: 'note', folderId: folderId || null, title: '', body: '', beat: null, cover: null, createdAt: t, updatedAt: t, deleted: false };
 }
 
 // al arrancar: sacar notas vacías que nunca se tocaron
@@ -225,12 +233,257 @@ function toast(msg, action) {
   toastTimer = setTimeout(hideToast, action ? 6500 : 3000);
 }
 
+
+/* ---------- imágenes (portadas y fondos): quedan guardadas en el celular ---------- */
+const memImg = new Map();
+let idbP = null;
+function idb() {
+  if (!idbP) {
+    idbP = new Promise((res, rej) => {
+      if (!window.indexedDB) { rej(new Error('sin idb')); return; }
+      const rq = indexedDB.open('banger-maker', 1);
+      rq.onupgradeneeded = () => rq.result.createObjectStore('img');
+      rq.onsuccess = () => res(rq.result);
+      rq.onerror = () => rej(rq.error);
+      rq.onblocked = () => rej(new Error('bloqueada'));
+    });
+  }
+  return idbP;
+}
+async function idbDo(mode, fn) {
+  const d = await idb();
+  return new Promise((res, rej) => {
+    const tx = d.transaction('img', mode);
+    const rq = fn(tx.objectStore('img'));
+    tx.oncomplete = () => res(rq && rq.result);
+    tx.onerror = tx.onabort = () => rej(tx.error);
+  });
+}
+async function imgPut(key, blob) { memImg.set(key, blob); try { await idbDo('readwrite', s => s.put(blob, key)); } catch { /* queda en memoria mientras la app esté abierta */ } }
+async function imgGet(key) {
+  try { const b = await idbDo('readonly', s => s.get(key)); if (b) return b; } catch { /* sigue */ }
+  return memImg.get(key) || null;
+}
+async function imgDel(key) { memImg.delete(key); try { await idbDo('readwrite', s => s.delete(key)); } catch { /* nada */ } }
+
+function loadImage(file) {
+  return new Promise((res, rej) => {
+    const u = URL.createObjectURL(file);
+    const im = new Image();
+    im.onload = () => { URL.revokeObjectURL(u); res(im); };
+    im.onerror = () => { URL.revokeObjectURL(u); rej(new Error('imagen')); };
+    im.src = u;
+  });
+}
+const canvasBlob = (c, q) => new Promise(r => c.toBlob(r, 'image/jpeg', q));
+
+async function resizeBlob(file, maxSide, q) {
+  const im = await loadImage(file);
+  const k = Math.min(1, maxSide / Math.max(im.naturalWidth, im.naturalHeight));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(im.naturalWidth * k));
+  c.height = Math.max(1, Math.round(im.naturalHeight * k));
+  c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+  return canvasBlob(c, q);
+}
+
+const blobToDataUrl = b => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(b); });
+async function dataUrlToBlob(u) { return (await fetch(u)).blob(); }
+
+function pickImage() {
+  return new Promise(res => {
+    const input = h('input', { type: 'file', accept: 'image/*' });
+    input.addEventListener('change', () => res((input.files && input.files[0]) || null));
+    input.addEventListener('cancel', () => res(null));
+    input.click();
+  });
+}
+
+/* ---------- portadas ---------- */
+const coverUrl = new Map(); // id -> dirección temporal de la imagen
+function setCoverUrl(id, blob) {
+  const old = coverUrl.get(id);
+  if (old) URL.revokeObjectURL(old);
+  coverUrl.set(id, URL.createObjectURL(blob));
+}
+async function storeCover(id, blob) { await imgPut('cover:' + id, blob); setCoverUrl(id, blob); }
+async function dropCover(id) {
+  await imgDel('cover:' + id);
+  const old = coverUrl.get(id);
+  if (old) URL.revokeObjectURL(old);
+  coverUrl.delete(id);
+}
+async function preloadCovers() {
+  let any = false;
+  for (const it of [...db.notes, ...db.folders]) {
+    if (!it.cover || it.deleted || coverUrl.has(it.id)) continue;
+    const b = await imgGet('cover:' + it.id);
+    if (b) { setCoverUrl(it.id, b); any = true; }
+  }
+  return any;
+}
+const coverBg = id => (coverUrl.has(id) ? `background-image:url("${coverUrl.get(id)}")` : null);
+function refreshList() { if (ui.view === 'list') renderList(); }
+
+/* portada que llega de la nube o de una copia de seguridad */
+function remoteCover(it, data, changed) {
+  if (!it.cover) { if (coverUrl.has(it.id)) dropCover(it.id).then(refreshList); return; }
+  if (data && (changed || !coverUrl.has(it.id))) {
+    dataUrlToBlob(data).then(b => storeCover(it.id, b)).then(refreshList).catch(() => { /* imagen dañada */ });
+  }
+}
+async function coverData(id) {
+  try { const b = await imgGet('cover:' + id); return b ? await blobToDataUrl(b) : undefined; } catch { return undefined; }
+}
+
+/* recorte 4:3: arrastrar para encuadrar, pellizcar o deslizar para acercar */
+function cropSheet(file, mode) {
+  return showSheet((panel, close) => {
+    const W = 640, H = 480;
+    const canvas = h('canvas', { width: W, height: H });
+    const box = h('div', { class: 'crop' }, canvas);
+    const zoomIn = h('input', { class: 'plain', type: 'range', min: 1, max: 4, step: 0.01, value: 1, 'aria-label': 'Acercar' });
+    const ok = h('button', { class: 'btn btn-primary', disabled: true }, 'Usar portada');
+    let img = null, cx = 0, cy = 0, zoom = 1;
+
+    const scale = () => Math.max(W / img.naturalWidth, H / img.naturalHeight) * zoom;
+    const render = (ctx, guide) => {
+      const s = scale();
+      cx = clamp(cx, W / 2 / s, img.naturalWidth - W / 2 / s);
+      cy = clamp(cy, H / 2 / s, img.naturalHeight - H / 2 / s);
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+      ctx.drawImage(img, W / 2 - cx * s, H / 2 - cy * s, img.naturalWidth * s, img.naturalHeight * s);
+      if (guide) {
+        ctx.fillStyle = 'rgba(0,0,0,.55)';
+        if (mode === 'folder') { const band = W * 0.4, top = (H - band) / 2; ctx.fillRect(0, 0, W, top); ctx.fillRect(0, H - top, W, top); }
+        else { const side = (W - H) / 2; ctx.fillRect(0, 0, side, H); ctx.fillRect(W - side, 0, side, H); }
+      }
+    };
+    const draw = () => { if (img) render(canvas.getContext('2d'), true); };
+
+    const pts = new Map();
+    let lastD = 0;
+    box.addEventListener('pointerdown', e => { try { box.setPointerCapture(e.pointerId); } catch { /* ignore */ } pts.set(e.pointerId, [e.clientX, e.clientY]); lastD = 0; });
+    box.addEventListener('pointermove', e => {
+      if (!img || !pts.has(e.pointerId)) return;
+      const prev = pts.get(e.pointerId), k = W / box.clientWidth;
+      pts.set(e.pointerId, [e.clientX, e.clientY]);
+      if (pts.size === 1) {
+        const s = scale();
+        cx -= (e.clientX - prev[0]) * k / s;
+        cy -= (e.clientY - prev[1]) * k / s;
+      } else if (pts.size === 2) {
+        const [p, q] = [...pts.values()];
+        const d = Math.hypot(p[0] - q[0], p[1] - q[1]);
+        if (lastD) { zoom = clamp(zoom * d / lastD, 1, 4); zoomIn.value = zoom; }
+        lastD = d;
+      }
+      draw();
+    });
+    const up = e => { pts.delete(e.pointerId); lastD = 0; };
+    box.addEventListener('pointerup', up);
+    box.addEventListener('pointercancel', up);
+    zoomIn.addEventListener('input', () => { zoom = +zoomIn.value; draw(); });
+
+    ok.addEventListener('click', () => {
+      if (!img) return;
+      const out = document.createElement('canvas');
+      out.width = W; out.height = H;
+      render(out.getContext('2d'), false);
+      canvasBlob(out, 0.78).then(b => close(b));
+    });
+
+    panel.append(
+      h('h2', { class: 'sheet-title' }, mode === 'folder' ? 'Portada de la carpeta' : 'Portada de la nota'),
+      h('p', { class: 'hint' }, mode === 'folder'
+        ? 'Arrastrá para encuadrar. Lo que queda en la franja clara es lo que se ve arriba de la carpeta.'
+        : 'Arrastrá para encuadrar. Lo que queda en el cuadrado claro es lo que se ve en la lista.'),
+      box, zoomIn,
+      h('div', { class: 'btn-row', style: 'margin-top:12px' },
+        h('button', { class: 'btn btn-ghost', onclick: () => close() }, 'Cancelar'), ok)
+    );
+
+    loadImage(file).then(im => {
+      img = im; cx = im.naturalWidth / 2; cy = im.naturalHeight / 2;
+      ok.disabled = false; draw();
+    }).catch(() => { toast('No pude abrir esa imagen'); close(); });
+  });
+}
+
+async function pickCover(it) {
+  const file = await pickImage();
+  if (!file) return;
+  const blob = await cropSheet(file, it.kind === 'folder' ? 'folder' : 'note');
+  if (!blob) return;
+  try {
+    await storeCover(it.id, blob);
+    it.cover = uid(); touch(it); persistNow(); refreshList();
+    toast('Portada lista');
+  } catch { toast('No se pudo guardar la portada'); }
+}
+
+async function removeCover(it) {
+  await dropCover(it.id);
+  it.cover = null; touch(it); persistNow(); refreshList();
+  toast('Portada quitada');
+}
+
+function coverMenu(it) {
+  if (!it.cover || !coverUrl.has(it.id)) { pickCover(it); return; }
+  showSheet((panel, close) => {
+    panel.append(
+      h('h2', { class: 'sheet-title' }, 'Portada'),
+      h('div', { class: 'cover-prev', style: coverBg(it.id) }),
+      h('div', { class: 'actions' },
+        h('button', { class: 'action', onclick: () => { close(); pickCover(it); } }, icon('image', 22), h('span', null, 'Cambiar portada')),
+        h('button', { class: 'action danger', onclick: () => { close(); removeCover(it); } }, icon('trash', 22), h('span', null, 'Quitar portada')))
+    );
+  });
+}
+
+/* ---------- fondos propios (inicio y bloc, separados) ---------- */
+const BGS = { home: { el: '#bg-home', flag: 'bgHome', url: null }, editor: { el: '#bg-editor', flag: 'bgEditor', url: null } };
+
+async function applyBackground(which) {
+  const B = BGS[which], el = $(B.el), photo = $('.photo', el);
+  if (B.url) { URL.revokeObjectURL(B.url); B.url = null; }
+  const blob = settings[B.flag] ? await imgGet('bg-' + which) : null;
+  if (blob) {
+    B.url = URL.createObjectURL(blob);
+    photo.style.backgroundImage = `url("${B.url}")`;
+    el.classList.add('has-photo');
+  } else {
+    photo.style.backgroundImage = '';
+    el.classList.remove('has-photo');
+    if (settings[B.flag]) { settings[B.flag] = false; saveSettings(); }
+  }
+}
+
+async function chooseBackground(which) {
+  const file = await pickImage();
+  if (!file) return false;
+  try {
+    await imgPut('bg-' + which, await resizeBlob(file, 1600, 0.8));
+    settings[BGS[which].flag] = true; saveSettings();
+    await applyBackground(which);
+    return true;
+  } catch { toast('No pude usar esa imagen'); return false; }
+}
+
+async function removeBackground(which) {
+  await imgDel('bg-' + which);
+  settings[BGS[which].flag] = false; saveSettings();
+  await applyBackground(which);
+}
+
+
+
 /* ---------- carpetas y notas: acciones ---------- */
 async function createFolder() {
   const name = await promptSheet({ title: 'Nueva carpeta', placeholder: 'Por ejemplo: Trap', okLabel: 'Crear', maxLength: 40 });
   if (!name) return null;
   const t = now();
-  const f = { id: uid(), kind: 'folder', name, createdAt: t, updatedAt: t, deleted: false };
+  const f = { id: uid(), kind: 'folder', name, cover: null, createdAt: t, updatedAt: t, deleted: false };
   db.folders.push(f);
   touch(f); persistNow();
   if (ui.view === 'list') renderList();
@@ -286,15 +539,19 @@ async function moveSheet(n) {
 function folderMenu(f) {
   menuSheet(f.name, [
     { icon: 'pencil', label: 'Cambiar nombre', run: () => renameFolder(f) },
+    { icon: 'image', label: 'Portada', run: () => coverMenu(f) },
     { icon: 'trash', label: 'Eliminar carpeta', danger: true, run: () => deleteFolder(f) }
   ]);
 }
 function noteMenu(n) {
   menuSheet(n.title || 'Sin título', [
+    { icon: 'image', label: 'Portada', run: () => coverMenu(n) },
     { icon: 'move', label: 'Mover a carpeta', run: () => moveSheet(n) },
     { icon: 'trash', label: 'Eliminar nota', danger: true, run: () => deleteNote(n, false) }
   ]);
 }
+
+
 
 /* ---------- lista ---------- */
 function previewOf(n) {
@@ -309,13 +566,7 @@ function renderList() {
   if (ui.folderId && !folder) ui.folderId = null;
 
   const inFolder = !!folder;
-  $('#btn-folder-back').hidden = !inFolder;
-  $('#btn-folder-menu').hidden = !inFolder;
-  $('#folder-name').hidden = !inFolder;
-  $('#brand').hidden = inFolder;
-  $('#sync-pill').hidden = inFolder;
-  $('#btn-new-folder').hidden = inFolder;
-  if (inFolder) $('#folder-name').textContent = folder.name;
+  updateHeader();
 
   const all = liveNotes();
   const q = norm(ui.query.trim());
@@ -324,6 +575,7 @@ function renderList() {
   const rowFor = n => {
     const fol = folderById(n.folderId);
     return h('div', { class: 'note-row' },
+      n.cover && coverUrl.has(n.id) ? h('button', { class: 'row-thumb', style: coverBg(n.id), 'aria-label': 'Abrir nota', onclick: () => openNote(n.id) }) : null,
       h('button', { class: 'note-main', onclick: () => openNote(n.id) },
         h('div', { class: 'note-title' + (n.title ? '' : ' empty') }, n.title || 'Sin título'),
         previewOf(n) ? h('div', { class: 'note-preview' }, previewOf(n)) : null,
@@ -348,6 +600,7 @@ function renderList() {
   }
 
   if (inFolder) {
+    if (folder.cover && coverUrl.has(folder.id)) root.append(h('div', { class: 'folder-cover', style: coverBg(folder.id) }));
     const notes = all.filter(n => n.folderId === folder.id).sort(byDate);
     if (!notes.length) {
       root.append(h('div', { class: 'empty-state' }, h('strong', null, 'Esta carpeta está vacía'), 'Tocá «Nueva nota» para escribir sobre un beat.'));
@@ -370,13 +623,17 @@ function tilesFor(folders) {
   const count = f => liveNotes().filter(n => n.folderId === f.id).length;
   return h('div', { class: 'tiles' }, folders.map(f => {
     const c = count(f);
-    return h('div', { class: 'tile', style: `--tape:${tapeFor(f.id)}` },
+    const cv = !!f.cover && coverUrl.has(f.id);
+    return h('div', { class: 'tile' + (cv ? ' has-cover' : ''), style: `--tape:${tapeFor(f.id)}` },
+      cv ? h('div', { class: 'tile-cover', style: coverBg(f.id) }) : null,
       h('button', { class: 'tile-main', onclick: () => openFolder(f.id) },
         h('span', { class: 'tile-name' }, f.name),
         h('span', { class: 'tile-count' }, c === 0 ? 'Vacía' : c === 1 ? '1 nota' : `${c} notas`)),
       h('button', { class: 'icon-btn sm tile-menu', 'aria-label': 'Opciones de ' + f.name, onclick: () => folderMenu(f) }, icon('more', 20)));
   }));
 }
+
+
 
 /* ---------- editor ---------- */
 const E = { note: null, timer: null };
@@ -412,21 +669,61 @@ function updateChip() {
   $('#beat-chip-text').textContent = b ? (b.title || 'Beat de YouTube') : 'Sin beat';
 }
 
+/* barra de arriba: cambia según la pantalla */
+function updateHeader() {
+  const ed = ui.view === 'editor';
+  const folder = !ed && ui.folderId ? folderById(ui.folderId) : null;
+  const inF = !!folder;
+  $('#btn-editor-back').hidden = !ed;
+  $('#note-title').hidden = !ed;
+  $('#btn-editor-menu').hidden = !ed;
+  $('#top-spacer').hidden = ed;
+  $('#brand').hidden = ed || inF;
+  $('#sync-pill').hidden = ed || inF;
+  $('#btn-folder-back').hidden = !inF;
+  $('#folder-name').hidden = !inF;
+  $('#btn-folder-menu').hidden = !inF;
+  $('#btn-new-folder').hidden = inF;
+  if (inF) $('#folder-name').textContent = folder.name;
+}
+
+function setView(v) {
+  ui.view = v;
+  document.documentElement.dataset.view = v;
+  $('#view-list').hidden = v !== 'list';
+  $('#view-editor').hidden = v !== 'editor';
+  updateHeader();
+  syncStrip();
+  updateAwake();
+}
+
 function showEditor(id) {
   const n = db.notes.find(x => x.id === id && !x.deleted);
   if (!n) { showList(null); return; }
   if (E.note && E.note !== n) leaveEditor();
   E.note = n;
-  ui.view = 'editor';
-  $('#view-list').hidden = true;
-  $('#view-editor').hidden = false;
+  setView('editor');
   titleInput().value = n.title;
   bodyInput().value = n.body;
   bodyInput().scrollTop = 0;
   updateCounts();
   setSaveState('saved');
-  renderBeatStrip({ autoplay: false });
-  keepAwake(true);
+  adoptNoteBeat(n);
+}
+
+/* al abrir una nota: el beat que suena no se corta si hay otro sonando */
+function adoptNoteBeat(n) {
+  const nb = n.beat;
+  if (nb) {
+    if (P.beat && P.beat.id === nb.id) {
+      P.noteId = n.id; P.a = nb.a ?? null; P.b = nb.b ?? null;
+      if (!P.beat.title && nb.title) P.beat.title = nb.title;
+      updateLoopUI();
+    } else if (!P.beat || !P.playing) {
+      loadBeat(nb, { autoplay: false, noteId: n.id });
+    }
+  }
+  syncStrip();
 }
 
 function leaveEditor() {
@@ -439,23 +736,11 @@ function leaveEditor() {
     else { n.deleted = true; touch(n); }
   }
   persistNow();
-  destroyPlayer();
-  keepAwake(false);
   E.note = null;
   if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
 }
 
-function renderBeatStrip({ autoplay = false } = {}) {
-  const n = E.note;
-  if (!n) return;
-  const has = !!n.beat;
-  $('#beat-empty').hidden = has;
-  $('#beat-wrap').hidden = !has;
-  updateChip();
-  if (has) mountPlayer(n.beat, { autoplay }); else destroyPlayer();
-}
-
-/* pantalla encendida mientras escribís */
+/* pantalla encendida mientras escribís o mientras suena un beat */
 let wake = null;
 async function keepAwake(on) {
   try {
@@ -467,9 +752,14 @@ async function keepAwake(on) {
     } else if (wake) { await wake.release(); wake = null; }
   } catch { /* no pasa nada si el celular no lo permite */ }
 }
+function updateAwake() { keepAwake(ui.view === 'editor' || P.playing); }
 
-/* ---------- reproductor de YouTube ---------- */
-const P = { player: null, ready: false, vid: null, a: null, b: null, rate: 1, dragging: false, timer: null, dur: 0, playing: false, token: 0, apiPromise: null };
+
+
+/* ---------- reproductor de YouTube (uno solo para toda la app) ---------- */
+// El reproductor vive en un único lugar del documento y nunca se mueve:
+// por eso el beat sigue sonando al cambiar de pantalla.
+const P = { player: null, ready: false, creating: false, gen: 0, beat: null, noteId: null, loadedId: null, want: null, a: null, b: null, rate: 1, dragging: false, timer: null, dur: 0, playing: false, apiPromise: null };
 
 function loadYTApi() {
   if (window.YT && window.YT.Player) return Promise.resolve();
@@ -490,14 +780,16 @@ function showPlayerMsg(text, retry) {
   m.hidden = !text;
   m.textContent = text || '';
   m.style.cursor = retry ? 'pointer' : '';
-  m.onclick = retry ? () => { if (E.note && E.note.beat) mountPlayer(E.note.beat, { autoplay: false }); } : null;
+  m.onclick = retry ? retryBeat : null;
 }
 
 function setPlayIcon(playing) {
+  const changed = P.playing !== playing;
   P.playing = playing;
   const b = $('#c-play');
   b.innerHTML = svg(playing ? 'pause' : 'play', 20);
   b.setAttribute('aria-label', playing ? 'Pausar' : 'Reproducir');
+  if (changed) updateAwake();
 }
 
 function updateTimeUI(t) {
@@ -524,48 +816,109 @@ function updateLoopUI() {
 
 function setSpeedLabel() { $('#c-speed').textContent = P.rate + 'x'; }
 
-function destroyPlayer() {
-  P.token++;
-  clearInterval(P.timer); P.timer = null;
-  try { if (P.player && P.player.destroy) P.player.destroy(); } catch { /* ya no existe */ }
-  P.player = null; P.ready = false; P.vid = null; P.playing = false;
-  const holder = $('#yt-holder');
-  if (holder) holder.replaceChildren();
+function updateNowPlaying() { $('#np-title').textContent = P.beat ? (P.beat.title || 'Beat de YouTube') : ''; }
+
+/* qué se ve arriba: reproductor, "elegir beat" o el aviso de beat distinto */
+function syncStrip() {
+  const inEd = ui.view === 'editor' && !!E.note;
+  const loaded = !!P.beat;
+  $('#strip').hidden = !(loaded || inEd);
+  $('#np-bar').hidden = !loaded;
+  $('#beat-empty').hidden = loaded || !inEd;
+  $('#beat-wrap').hidden = !loaded;
+  const nb = inEd ? E.note.beat : null;
+  const mismatch = inEd && loaded && !(nb && nb.id === P.beat.id);
+  $('#beat-mismatch').hidden = !mismatch;
+  if (mismatch) {
+    $('#mm-text').textContent = nb ? 'Suena otro beat.' : 'Esta nota no tiene beat.';
+    $('#btn-swap').textContent = nb ? 'Cambiar al de esta nota' : 'Usar el que suena';
+  }
+  updateNowPlaying();
+  updateChip();
 }
 
-async function mountPlayer(beat, { autoplay = false } = {}) {
-  destroyPlayer();
-  const token = P.token;
-  P.vid = beat.id; P.a = beat.a ?? null; P.b = beat.b ?? null; P.rate = 1; P.dur = 0; P.dragging = false;
-  setPlayIcon(false); updateTimeUI(0); updateLoopUI(); setSpeedLabel(); showPlayerMsg('');
-  $('#yt-holder').replaceChildren(h('div', { id: 'yt-target' }));
+/* la nota a la que pertenece el beat que suena (si todavía lo tiene) */
+function ownerNote() {
+  const ok = n => !!(n && !n.deleted && n.beat && P.beat && n.beat.id === P.beat.id);
+  if (ok(E.note)) return E.note;
+  const n = P.noteId ? db.notes.find(x => x.id === P.noteId) : null;
+  return ok(n) ? n : null;
+}
+
+function loadBeat(beat, { autoplay = false, noteId = null } = {}) {
+  const same = !!(P.beat && P.beat.id === beat.id && P.loadedId === beat.id);
+  P.beat = { id: beat.id, title: beat.title || (same && P.beat.title) || '' };
+  P.noteId = noteId;
+  P.a = beat.a ?? null; P.b = beat.b ?? null;
+  if (!same) {
+    P.rate = 1; P.dur = 0; P.dragging = false;
+    setPlayIcon(false); updateTimeUI(0); setSpeedLabel(); showPlayerMsg('');
+  }
+  P.want = { id: beat.id, autoplay };
+  updateLoopUI();
+  syncStrip();
+  ensurePlayer();
+}
+
+function closePlayer() {
+  P.gen++;
+  clearInterval(P.timer); P.timer = null;
+  try { if (P.player && P.player.destroy) P.player.destroy(); } catch { /* ya no existe */ }
+  P.player = null; P.ready = false; P.creating = false; P.loadedId = null; P.want = null;
+  P.beat = null; P.noteId = null; P.a = P.b = null; P.dur = 0;
+  setPlayIcon(false);
+  const holder = $('#yt-holder');
+  if (holder) holder.replaceChildren();
+  showPlayerMsg('');
+  syncStrip();
+}
+
+function retryBeat() {
+  if (!P.beat) return;
+  showPlayerMsg('');
+  P.loadedId = null;
+  P.want = { id: P.beat.id, autoplay: false };
+  ensurePlayer();
+}
+
+async function ensurePlayer() {
+  if (P.ready) { applyWant(); return; }
+  if (P.creating) return;
+  P.creating = true;
+  const gen = P.gen;
   try { await loadYTApi(); } catch {
-    if (token === P.token) showPlayerMsg('Sin conexión. Tus notas funcionan igual. Tocá acá para reintentar el beat.', true);
+    if (gen === P.gen) {
+      P.creating = false;
+      if (P.beat) showPlayerMsg('Sin conexión. Tus notas funcionan igual. Tocá acá para reintentar el beat.', true);
+    }
     return;
   }
-  if (token !== P.token || !E.note) return;
-  const vars = { playsinline: 1, controls: 0, disablekb: 1, fs: 0, rel: 0, modestbranding: 1, iv_load_policy: 3, autoplay: autoplay ? 1 : 0 };
+  if (gen !== P.gen) return;
+  const w = P.want;
+  if (!w) { P.creating = false; return; }
+  P.loadedId = w.id;
+  $('#yt-holder').replaceChildren(h('div', { id: 'yt-target' }));
+  const vars = { playsinline: 1, controls: 0, disablekb: 1, fs: 0, rel: 0, modestbranding: 1, iv_load_policy: 3, autoplay: w.autoplay ? 1 : 0 };
   if (/^https?:/.test(location.origin)) vars.origin = location.origin;
   P.player = new window.YT.Player('yt-target', {
-    width: '200', height: '200', videoId: beat.id, playerVars: vars,
+    width: '200', height: '200', videoId: w.id, playerVars: vars,
     events: {
       onReady: () => {
-        if (token !== P.token) return;
-        P.ready = true;
+        if (gen !== P.gen) return;
+        P.ready = true; P.creating = false;
         P.timer = setInterval(tick, 150);
-        if (autoplay) { try { P.player.playVideo(); } catch { /* sin permiso */ } }
+        applyWant();
         syncTitleFromPlayer();
       },
       onStateChange: e => {
-        if (token !== P.token) return;
+        if (gen !== P.gen) return;
         const s = e.data;
-        if (s === 1) setPlayIcon(true);
+        if (s === 1) { setPlayIcon(true); syncTitleFromPlayer(); }
         else if (s === 2 || s === 5) setPlayIcon(false);
         else if (s === 0) onEnded();
-        if (s === 1) syncTitleFromPlayer();
       },
       onError: e => {
-        if (token !== P.token) return;
+        if (gen !== P.gen) return;
         const c = e.data;
         showPlayerMsg(
           c === 101 || c === 150 ? 'El dueño de este video no deja reproducirlo acá. Elegí otro beat.' :
@@ -576,12 +929,30 @@ async function mountPlayer(beat, { autoplay = false } = {}) {
   });
 }
 
+/* cuando el reproductor ya existe, cambiar de video sin volver a crearlo */
+function applyWant() {
+  const w = P.want;
+  if (!w || !P.ready || !P.player) return;
+  P.want = null;
+  try {
+    if (w.id !== P.loadedId) {
+      P.loadedId = w.id;
+      const args = { videoId: w.id, startSeconds: 0 };
+      if (w.autoplay) P.player.loadVideoById(args); else P.player.cueVideoById(args);
+      P.player.setPlaybackRate(1);
+    } else if (w.autoplay) P.player.playVideo();
+  } catch { /* se puede reintentar tocando el mensaje */ }
+}
+
 function syncTitleFromPlayer() {
-  const n = E.note;
-  if (!n || !n.beat || n.beat.title || !P.player || !P.player.getVideoData) return;
+  if (!P.beat || P.beat.title || !P.player || !P.player.getVideoData) return;
   try {
     const t = (P.player.getVideoData() || {}).title;
-    if (t) { n.beat.title = t; touch(n); updateChip(); }
+    if (!t) return;
+    P.beat.title = t;
+    updateNowPlaying();
+    const n = ownerNote();
+    if (n && !n.beat.title) { n.beat.title = t; touch(n); updateChip(); }
   } catch { /* todavía sin datos */ }
 }
 
@@ -611,10 +982,8 @@ function seekTo(t) {
 }
 
 function saveLoop() {
-  const n = E.note;
-  if (!n || !n.beat) return;
-  n.beat.a = P.a; n.beat.b = P.b;
-  touch(n);
+  const n = ownerNote();
+  if (n) { n.beat.a = P.a; n.beat.b = P.b; touch(n); }
   updateLoopUI();
 }
 
@@ -639,6 +1008,18 @@ function markTime() {
   const shift = pos => (pos <= start + removed ? start + tag.length : pos + tag.length - removed);
   ta.setSelectionRange(shift(s), shift(e));
   onEdit();
+}
+
+/* botón del aviso: pasar al beat de la nota, o dejar este beat en la nota */
+function swapBeat() {
+  const n = E.note;
+  if (!n) return;
+  if (n.beat) loadBeat(n.beat, { autoplay: true, noteId: n.id });
+  else if (P.beat) {
+    n.beat = { id: P.beat.id, title: P.beat.title, a: P.a, b: P.b };
+    P.noteId = n.id;
+    touch(n); persistNow(); syncStrip();
+  }
 }
 
 function bindPlayer() {
@@ -675,12 +1056,16 @@ function bindPlayer() {
     try { if (P.ready) P.player.setPlaybackRate(P.rate); } catch { /* ignore */ }
     setSpeedLabel();
   }));
-  $('#c-mark').addEventListener('click', withFocus(() => { if (E.note) markTime(); }));
+  $('#c-mark').addEventListener('click', withFocus(() => {
+    if (E.note) markTime(); else toast('Abrí una nota para marcar el tiempo');
+  }));
 
   const seek = $('#seek-input');
   seek.addEventListener('input', () => { P.dragging = true; updateTimeUI(+seek.value); });
   seek.addEventListener('change', () => { seekTo(+seek.value); P.dragging = false; });
 }
+
+
 
 /* ---------- beats: links, búsqueda, compartir ---------- */
 function parseYouTube(input) {
@@ -742,15 +1127,18 @@ function beatItem(info, sub, onPick) {
     h('span', { class: 'beat-info' }, h('b', null, info.title), sub ? h('small', null, sub) : null));
 }
 
+
 function chooseBeat(info) {
   const n = E.note;
   if (!n) return;
   n.beat = { id: info.id, title: info.title || '', a: null, b: null };
   touch(n);
-  renderBeatStrip({ autoplay: true });
+  loadBeat(n.beat, { autoplay: true, noteId: n.id });
   if (!n.beat.title) {
     fetchTitle(info.id).then(t => {
-      if (t && E.note === n && n.beat && n.beat.id === info.id && !n.beat.title) { n.beat.title = t; touch(n); updateChip(); }
+      if (!t || !n.beat || n.beat.id !== info.id || n.beat.title) return;
+      n.beat.title = t; touch(n); updateChip();
+      if (P.beat && P.beat.id === info.id && !P.beat.title) { P.beat.title = t; updateNowPlaying(); }
     });
   }
 }
@@ -758,15 +1146,17 @@ function chooseBeat(info) {
 function clearBeat() {
   const n = E.note;
   if (!n) return;
+  const was = n.beat && n.beat.id;
   n.beat = null; touch(n); persistNow();
-  renderBeatStrip();
+  if (P.beat && P.beat.id === was) closePlayer(); else syncStrip();
 }
 
-function openBeatSheet() {
-  const n = E.note;
-  if (!n) return;
+/* forPlayer: cambiar el beat que suena (desde la lista) sin tocar ninguna nota */
+function openBeatSheet({ forPlayer = false } = {}) {
+  const n = forPlayer ? null : E.note;
+  if (!forPlayer && !n) return;
   showSheet((panel, close) => {
-    const pick = info => { close(); chooseBeat(info); };
+    const pick = info => { close(); if (forPlayer) loadBeat({ id: info.id, title: info.title || '' }, { autoplay: true }); else chooseBeat(info); };
     const input = h('input', { class: 'field', type: 'search', placeholder: 'Buscá un beat o pegá un link', autocomplete: 'off', enterkeyhint: 'search' });
     const msg = h('p', { class: 'hint' });
     const results = h('div', { class: 'beat-list' });
@@ -807,7 +1197,7 @@ function openBeatSheet() {
 
     const used = usedBeats();
     panel.append(
-      h('h2', { class: 'sheet-title' }, 'Elegir beat'),
+      h('h2', { class: 'sheet-title' }, forPlayer ? 'Cambiar el beat que suena' : 'Elegir beat'),
       h('div', { class: 'stack' }, input,
         h('div', { class: 'btn-row' },
           h('button', { class: 'btn btn-ghost', onclick: paste }, icon('paste', 20), 'Pegar link'),
@@ -815,12 +1205,13 @@ function openBeatSheet() {
       msg, results,
       used.length ? h('div', { class: 'list-label' }, 'Beats que ya usaste') : null,
       used.length ? h('div', { class: 'beat-list' }, used.map(b => beatItem(b, `${b.count} ${b.count === 1 ? 'nota' : 'notas'}`, () => pick(b)))) : null,
-      n.beat ? h('div', { class: 'actions', style: 'margin-top:10px' },
+      n && n.beat ? h('div', { class: 'actions', style: 'margin-top:10px' },
         h('button', { class: 'action danger', onclick: () => { close(); clearBeat(); } }, icon('x', 22), h('span', null, 'Quitar el beat de esta nota'))) : null
     );
     if (!settings.ytKey) msg.textContent = 'Tip: en YouTube tocá Compartir y elegí Banger Maker para traer el beat directo.';
   });
 }
+
 
 /* beat que llega desde el botón Compartir de YouTube */
 function receiveBeat(yt) {
@@ -841,6 +1232,8 @@ function receiveBeat(yt) {
   });
 }
 
+
+
 /* ---------- menú del editor ---------- */
 async function copyNoteText() {
   const n = E.note;
@@ -853,9 +1246,11 @@ function editorMenu() {
   const n = E.note;
   if (!n) return;
   menuSheet(null, [
-    { icon: 'music', label: n.beat ? 'Cambiar beat' : 'Elegir beat', run: openBeatSheet },
+    { icon: 'music', label: n.beat ? 'Cambiar beat' : 'Elegir beat', run: () => openBeatSheet() },
+    { icon: 'image', label: 'Portada de la nota', run: () => coverMenu(n) },
     { icon: 'move', label: 'Mover a carpeta', run: () => moveSheet(n) },
     { icon: 'copy', label: 'Copiar texto', run: copyNoteText },
+    P.beat ? { icon: 'x', label: 'Cerrar el reproductor', run: closePlayer } : null,
     { icon: 'trash', label: 'Eliminar nota', danger: true, run: () => deleteNote(n, true) }
   ]);
 }
@@ -873,15 +1268,28 @@ service cloud.firestore {
   }
 }`;
 
+const STYLES = [
+  { id: 'noche', name: 'Noche', desc: 'Violeta y dorado', bg: '#171933', c1: '#5c50e6', c2: '#d64896', c3: '#2e80dc', accent: '#ffc93c' },
+  { id: 'lava', name: 'Lava', desc: 'Rojos y naranjas', bg: '#1d0f1c', c1: '#ff5f6d', c2: '#ffb347', c3: '#b02a7a', accent: '#ff9a5c' },
+  { id: 'nebulosa', name: 'Nebulosa', desc: 'Azul eléctrico y rosa', bg: '#0f1030', c1: '#6a5cff', c2: '#ff6ec7', c3: '#3fd0e0', accent: '#b8a1ff' },
+  { id: 'bosque', name: 'Bosque', desc: 'Verdes, tranquilo', bg: '#0c1f1d', c1: '#1fa08a', c2: '#b4e36a', c3: '#2a6fb3', accent: '#7be0b0' },
+  { id: 'atardecer', name: 'Atardecer', desc: 'Durazno y violeta', bg: '#1a1230', c1: '#ff7e8b', c2: '#ffb36b', c3: '#7b5cff', accent: '#ffb08a' },
+  { id: 'acuarela', name: 'Acuarela', desc: 'Claro y pastel', bg: '#f3f1fb', c1: '#ffaacd', c2: '#aad7ff', c3: '#c8b4ff', accent: '#ffd166' }
+];
+
 function applySettings() {
   const r = document.documentElement;
-  r.dataset.theme = settings.theme;
+  const st = STYLES.find(s => s.id === settings.style) || STYLES[0];
+  settings.style = st.id;
+  r.dataset.style = st.id;
+  r.dataset.calm = settings.calm ? '1' : '0';
   r.dataset.font = settings.font;
   r.style.setProperty('--note-size', settings.size + 'px');
-  r.style.setProperty('--note-lh', Math.round(settings.size * 1.78) + 'px');
-  const dark = settings.theme === 'dark' || (settings.theme === 'auto' && !matchMedia('(prefers-color-scheme: light)').matches);
+  r.style.setProperty('--note-lh', Math.round(settings.size * 1.6) + 'px');
+  r.style.setProperty('--dim-home', settings.dimHome);
+  r.style.setProperty('--dim-editor', settings.dimEditor);
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = dark ? '#171933' : '#f1f2fa';
+  if (meta) meta.content = st.bg;
 }
 
 function seg(options, current, onPick) {
@@ -889,9 +1297,14 @@ function seg(options, current, onPick) {
     h('button', { 'aria-pressed': String(current === val), onclick: () => onPick(val) }, label)));
 }
 
-function exportData() {
-  const payload = { app: 'banger-maker', version: 1, exportedAt: new Date().toISOString(), folders: db.folders, notes: db.notes };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+async function exportData() {
+  const withCover = async it => (it.cover ? { ...it, coverData: await coverData(it.id) } : it);
+  const payload = {
+    app: 'banger-maker', version: 2, exportedAt: new Date().toISOString(),
+    folders: await Promise.all(db.folders.map(withCover)),
+    notes: await Promise.all(db.notes.map(withCover))
+  };
+  const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
   const a = h('a', { href: URL.createObjectURL(blob), download: `banger-maker-${new Date().toISOString().slice(0, 10)}.json` });
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
@@ -907,15 +1320,17 @@ function importData() {
       const j = JSON.parse(await file.text());
       if (!Array.isArray(j.notes) || !Array.isArray(j.folders)) throw new Error('formato');
       let added = 0;
-      const merge = (list, arr, kind) => list.forEach(it => {
-        if (!it || typeof it.id !== 'string') return;
+      const merge = (list, arr, kind) => list.forEach(raw => {
+        if (!raw || typeof raw.id !== 'string') return;
+        const it = { ...raw, kind };
+        const cd = it.coverData; delete it.coverData;
         const cur = arr.find(x => x.id === it.id);
-        if (!cur) { arr.push({ ...it, kind }); dirty.add(it.id); if (!it.deleted) added++; }
-        else if ((it.updatedAt || 0) > (cur.updatedAt || 0)) { Object.assign(cur, it, { kind }); dirty.add(it.id); }
+        if (!cur) { arr.push(it); dirty.add(it.id); if (!it.deleted) added++; remoteCover(it, cd, true); }
+        else if ((it.updatedAt || 0) > (cur.updatedAt || 0)) { Object.assign(cur, it); dirty.add(it.id); remoteCover(cur, cd, true); }
       });
       merge(j.folders, db.folders, 'folder');
       merge(j.notes, db.notes, 'note');
-      persistNow(); cloudSchedule(500); renderList();
+      persistNow(); cloudSchedule(500); refreshList();
       toast(added ? `Se importaron ${added} elementos` : 'No había nada nuevo para importar');
     } catch { toast('Ese archivo no es una copia de Banger Maker'); }
   });
@@ -976,6 +1391,31 @@ function cloudSection() {
   return h('div', { class: 'set-group' }, kids);
 }
 
+function styleCard(s, redo) {
+  const sw = `background:radial-gradient(circle at 16% 24%, ${s.c1} 0, transparent 62%), radial-gradient(circle at 90% 80%, ${s.c2} 0, transparent 58%), radial-gradient(circle at 62% -10%, ${s.c3} 0, transparent 55%), ${s.bg}`;
+  return h('button', {
+    class: 'style-card', 'data-style-id': s.id, 'aria-pressed': String(settings.style === s.id),
+    onclick: () => { settings.style = s.id; applySettings(); saveSettings(); redo(); }
+  },
+  h('div', { class: 'style-sw', style: sw }, h('i', { style: `background:${s.accent}` })),
+  h('b', null, s.name), h('small', null, s.desc));
+}
+
+function bgRow(which, label, redo) {
+  const B = BGS[which], on = !!settings[B.flag];
+  const dimKey = which === 'home' ? 'dimHome' : 'dimEditor';
+  const dim = h('input', { class: 'plain', type: 'range', min: 0, max: 0.8, step: 0.05, value: settings[dimKey], 'aria-label': 'Oscurecer la foto' });
+  dim.addEventListener('input', () => { settings[dimKey] = +dim.value; applySettings(); saveSettings(); });
+  return h('div', { class: 'set-row' },
+    h('span', { class: 'set-label' }, label),
+    h('div', { class: 'bg-row' },
+      h('div', { class: 'bg-prev', style: on && B.url ? `background-image:url("${B.url}")` : null }),
+      h('button', { class: 'btn btn-ghost', 'data-bg': which, onclick: async () => { if (await chooseBackground(which)) redo(); } }, icon('image', 20), on ? 'Cambiar' : 'Elegir foto'),
+      on ? h('button', { class: 'btn btn-ghost', onclick: async () => { await removeBackground(which); redo(); } }, 'Quitar') : null),
+    on ? h('span', { class: 'set-label' }, 'Oscurecer la foto') : null,
+    on ? dim : null);
+}
+
 function openSettings() {
   const prevScroll = sheet && sheet.kind === 'settings' ? sheet.panel.scrollTop : 0;
   const redo = () => openSettings();
@@ -988,10 +1428,15 @@ function openSettings() {
 
     panel.append(
       h('h2', { class: 'sheet-title' }, 'Ajustes'),
-      h('div', { class: 'set-group' }, h('h3', null, 'Apariencia'),
-        h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'Tema'),
-          seg([['dark', 'Oscuro'], ['light', 'Claro'], ['auto', 'Del celular']], settings.theme, v => { settings.theme = v; applySettings(); saveSettings(); redo(); })),
-        h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'Letra del bloc'),
+      h('div', { class: 'set-group' }, h('h3', null, 'Estilo'),
+        h('div', { class: 'styles' }, STYLES.map(s => styleCard(s, redo))),
+        h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'Modo ahorro: fondo quieto, sin movimiento'),
+          seg([[false, 'Apagado'], [true, 'Activado']], !!settings.calm, v => { settings.calm = v; applySettings(); saveSettings(); redo(); }))),
+      h('div', { class: 'set-group' }, h('h3', null, 'Fondos con tus fotos'),
+        bgRow('home', 'Fondo del inicio', redo),
+        bgRow('editor', 'Fondo del bloc', redo)),
+      h('div', { class: 'set-group' }, h('h3', null, 'Bloc de notas'),
+        h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'Letra'),
           seg([['mono', 'Máquina'], ['sans', 'Normal']], settings.font, v => { settings.font = v; applySettings(); saveSettings(); redo(); })),
         h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'Tamaño de letra'), size, sample)),
       h('div', { class: 'set-group' }, h('h3', null, 'Beat'),
@@ -1016,6 +1461,7 @@ function openSettings() {
     panel.scrollTop = prevScroll;
   }, { kind: 'settings' });
 }
+
 
 /* ---------- nube (Firebase: Google + Firestore) ---------- */
 const cloud = { cfg: lsGet(K.cloud, null), mods: null, app: null, auth: null, fs: null, user: null, unsub: null, state: 'off', detail: '', first: true, pushTimer: null };
@@ -1096,15 +1542,19 @@ function cloudSubscribe() {
 }
 
 /* trae lo que cambió en la nube; gana siempre lo más nuevo */
-function applyRemote(r) {
-  if (!r || typeof r.id !== 'string') return false;
+function applyRemote(raw) {
+  if (!raw || typeof raw.id !== 'string') return false;
+  const r = { ...raw };
+  const cd = r.coverData; delete r.coverData;
   const arr = r.kind === 'folder' ? db.folders : db.notes;
   const local = arr.find(x => x.id === r.id);
-  if (!local) { arr.push(r); return true; }
+  if (!local) { arr.push(r); remoteCover(r, cd, true); return true; }
   if ((r.updatedAt || 0) > (local.updatedAt || 0)) {
     const beatChanged = !!(local.beat && local.beat.id) !== !!(r.beat && r.beat.id) || (local.beat && r.beat && local.beat.id !== r.beat.id);
+    const oldCover = local.cover;
     Object.assign(local, r);
     dirty.delete(r.id);
+    remoteCover(local, cd, local.cover !== oldCover);
     if (E.note === local) {
       if (local.deleted) { toast('Esta nota se eliminó en otro dispositivo'); history.back(); return true; }
       // la nube solo gana si es más nueva que lo último escrito acá, así que es seguro reemplazar el texto
@@ -1116,13 +1566,20 @@ function applyRemote(r) {
       }
       if (titleInput().value !== local.title) titleInput().value = local.title;
       updateCounts();
-      if (beatChanged) renderBeatStrip();
+      if (beatChanged) adoptNoteBeat(local);
     }
     return true;
   }
   if ((r.updatedAt || 0) < (local.updatedAt || 0)) dirty.add(r.id);
   else dirty.delete(r.id);
   return false;
+}
+
+/* lo que se sube: el elemento y, si tiene, su portada */
+async function payloadFor(it) {
+  const p = JSON.parse(JSON.stringify(it));
+  if (it.cover) { const d = await coverData(it.id); if (d) p.coverData = d; }
+  return p;
 }
 
 function onRemote(snap) {
@@ -1161,8 +1618,8 @@ async function cloudPush() {
         const it = findItem(id);
         if (!it) { dirty.delete(id); return null; }
         const ts = it.updatedAt;
-        const payload = JSON.parse(JSON.stringify(it));
-        return fsM.setDoc(fsM.doc(cloud.fs, 'users', cloud.user.uid, 'items', id), payload)
+        return payloadFor(it)
+          .then(payload => fsM.setDoc(fsM.doc(cloud.fs, 'users', cloud.user.uid, 'items', id), payload))
           .then(() => { if (it.updatedAt === ts) dirty.delete(id); });
       }).filter(Boolean)), 20000);
     }
@@ -1179,15 +1636,15 @@ window.addEventListener('online', () => { if (cloud.cfg) { cloudInit().then(() =
 window.addEventListener('offline', () => { if (cloud.cfg) setSync('offline'); });
 setInterval(() => { if (cloud.cfg && cloud.user && dirty.size) cloudSchedule(0); }, 60000);
 
+
+
 /* ---------- navegación ---------- */
 function showList(folderId) {
   if (E.note) leaveEditor();
-  ui.view = 'list';
   ui.folderId = folderId || null;
   ui.query = '';
   $('#search').value = '';
-  $('#view-editor').hidden = true;
-  $('#view-list').hidden = false;
+  setView('list');
   renderList();
 }
 
@@ -1248,18 +1705,27 @@ function bind() {
 
   $('#btn-editor-back').addEventListener('click', () => history.back());
   $('#btn-editor-menu').addEventListener('click', editorMenu);
-  $('#beat-empty').addEventListener('click', openBeatSheet);
-  $('#beat-chip').addEventListener('click', openBeatSheet);
+  $('#beat-empty').addEventListener('click', () => openBeatSheet());
+  $('#beat-chip').addEventListener('click', () => openBeatSheet());
+
+  $('#np-change').addEventListener('click', () => openBeatSheet({ forPlayer: true }));
+  $('#np-close').addEventListener('click', closePlayer);
+  $('#btn-swap').addEventListener('click', swapBeat);
 
   titleInput().addEventListener('input', onEdit);
   bodyInput().addEventListener('input', onEdit);
   titleInput().addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); bodyInput().focus(); } });
 
+  // al escribir en el bloc con el teclado abierto se esconde la barra de arriba para ganar renglones
+  const root = document.documentElement;
+  bodyInput().addEventListener('focus', () => root.classList.add('typing'));
+  bodyInput().addEventListener('blur', () => root.classList.remove('typing'));
+
   bindPlayer();
 
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { flushEdit(); if (cloud.cfg) cloudSchedule(0); }
-    else if (ui.view === 'editor') keepAwake(true);
+    else updateAwake();
   });
   window.addEventListener('pagehide', flushEdit);
 }
@@ -1276,6 +1742,8 @@ function boot() {
   hydrateIcons();
   bind();
   setupViewport();
+  applyBackground('home');
+  applyBackground('editor');
 
   const params = new URLSearchParams(location.search);
   const wasShare = params.has('url') || params.has('text') || params.has('title');
@@ -1289,6 +1757,7 @@ function boot() {
 
   setSync(cloud.cfg ? 'syncing' : 'off');
   showList(null);
+  preloadCovers().then(any => { if (any) refreshList(); }).catch(() => { /* sin portadas */ });
 
   if (wasShare) {
     const yt = parseYouTube(shared);

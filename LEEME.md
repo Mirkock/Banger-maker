@@ -22,7 +22,7 @@ Android solo deja instalar una app web si está publicada con `https://`. Es gra
 2. Arrastrá la carpeta `banger-maker` (la de los archivos, no el zip) a la página.
 3. Netlify te da una dirección tipo `https://nombre-raro.netlify.app`. Esa es tu app.
 
-Otras opciones gratis que sirven igual: GitHub Pages, Cloudflare Pages o Firebase Hosting.
+Otras opciones gratis que sirven igual: GitHub Pages (la que se usa ahora), Cloudflare Pages o Firebase Hosting.
 
 ## 2. Instalarla en el Moto G8
 
@@ -38,6 +38,10 @@ Otras opciones gratis que sirven igual: GitHub Pages, Cloudflare Pages o Firebas
 - **Buscar dentro de la app:** necesita una clave gratis de YouTube (ver más abajo). Sin clave, **Buscar** abre YouTube para que elijas y compartas.
 
 ## 4. Cómo se usa el reproductor
+
+- **El beat sigue sonando** cuando salís de la nota y te quedás en la app. Arriba aparece su nombre con **Cambiar** (elegís otro beat, sin tocar tus notas) y la **X** (cierra el reproductor).
+- Si abrís una nota que usa **otro beat** mientras suena uno, el que suena no se corta: aparece un botón **Cambiar al de esta nota**. Si abrís una nota **sin beat**, el botón es **Usar el que suena** y lo deja guardado en esa nota.
+- Si el beat está en pausa, al abrir una nota con otro beat se cambia solo (sin sonar).
 
 - **−10 / +10:** retrocede o adelanta 10 segundos.
 - **A y B:** marcás el inicio y el final de un tramo y se repite solo. La **X** lo quita. El tramo queda guardado en la nota.
@@ -85,9 +89,20 @@ El límite gratis alcanza para unas 100 búsquedas por día.
 - Si bloqueás la pantalla o salís de la app, el beat se pausa. Mientras escribís, la app mantiene la pantalla encendida.
 - Algunos videos no dejan reproducirse fuera de YouTube; en ese caso la app avisa y elegís otro.
 
+## Estilo, fondos y portadas
+
+- **Ajustes → Estilo:** seis looks (Noche, Lava, Nebulosa, Bosque, Atardecer, Acuarela). El bloc usa los mismos colores que el inicio pero más quietos y con un panel de vidrio, para escribir cómodo.
+- **Modo ahorro:** congela el movimiento del fondo.
+- **Fondos con tus fotos:** una foto para el inicio y otra distinta para el bloc, con un regulador para oscurecerlas. Quedan guardadas solo en el celular.
+- **Portadas:** en el menú ⋮ de una nota o de una carpeta, **Portada**. Elegís una foto de la galería, la encuadrás y listo. Las portadas viajan con la nube y entran en la copia de seguridad.
+- Con el teclado abierto, escribiendo en el bloc, se esconde la barra de arriba para que entren más renglones.
+
 ## Actualizar la app
 
-Si cambiás algún archivo, volvé a subir la carpeta y cambiá `banger-maker-v1` por `banger-maker-v2` en `sw.js` (primera línea de código), para que los celulares bajen la versión nueva.
+Subí los archivos nuevos al mismo repositorio de GitHub (**Add file → Upload files**; los que tienen el mismo nombre se reemplazan) y esperá un minuto. El link no cambia.
+Cada versión nueva trae `sw.js` con un número de caché distinto (`banger-maker-v2`, `v3`…): así los celulares bajan la versión nueva. Abrí la app, cerrala del todo y volvé a abrirla una o dos veces para que se actualice.
+
+**Versión 2:** nuevo diseño, reproductor persistente, fondos y portadas. Las notas, carpetas y la conexión con la nube de la versión 1 se mantienen. El tema «Claro» pasa a ser el estilo Acuarela.
 
 ## Después: Play Store
 
