@@ -32,12 +32,7 @@
     <button id="btn-editor-back" class="icon-btn" data-icon="back" aria-label="Volver a mis notas" hidden></button>
     <button id="btn-folder-back" class="icon-btn" data-icon="back" aria-label="Volver" hidden></button>
     <h1 id="brand" class="brand">
-      <svg class="brand-mark" width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
-        <rect x="3" y="12" width="4" height="12" rx="2" fill="var(--accent-ink)"/>
-        <rect x="9.5" y="6" width="4" height="18" rx="2" fill="var(--accent-ink)"/>
-        <rect x="16" y="9" width="4" height="15" rx="2" fill="var(--accent-ink)"/>
-        <rect x="22.5" y="15" width="4" height="9" rx="2" fill="var(--accent-ink)"/>
-      </svg>
+      <img class="brand-mark" src="logo-bust.png" alt="" width="38" height="38" decoding="async">
       <span>Banger Maker</span>
     </h1>
     <h1 id="folder-name" class="folder-name" hidden></h1>
@@ -120,8 +115,14 @@
     <div class="note-panel">
       <textarea id="note-body" class="note-body" placeholder="Escribí acá tus barras…" spellcheck="false" autocomplete="off" autocapitalize="sentences"></textarea>
     </div>
+    <div id="rhyme-bar" class="rhyme-bar" hidden>
+      <button id="rhyme-target" class="rtarget" type="button"></button>
+      <div id="rhyme-list" class="rlist"></div>
+      <button id="rhyme-filter" class="rfilter" type="button" aria-label="Filtros de rimas"><span class="ic" data-icon="sliders" data-size="20"></span></button>
+    </div>
     <footer class="editor-foot">
       <button id="beat-chip" class="beat-chip"><span class="ic" data-icon="music" data-size="16"></span><span id="beat-chip-text">Sin beat</span></button>
+      <button id="btn-rhymes" class="foot-btn" type="button" aria-pressed="true"><span class="ic" data-icon="rhyme" data-size="16"></span>Rimas</button>
       <span id="counts" class="counts"></span>
       <span id="save-state" class="save-state" data-state="saved">Guardado</span>
     </footer>
@@ -132,6 +133,8 @@
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
 <noscript>Banger Maker necesita JavaScript para funcionar.</noscript>
+<script src="rimas-datos.js"></script>
+<script src="rimas.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

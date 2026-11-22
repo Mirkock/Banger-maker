@@ -8,8 +8,10 @@ Funciona como app instalable en el celular (PWA). Las notas se guardan en el cel
 | Archivo | Para qué sirve |
 |---|---|
 | `index.html`, `styles.css`, `app.js` | La app |
+| `rimas.js`, `rimas-datos.js` | Las sugerencias de rimas (el motor y las listas de palabras) |
 | `manifest.webmanifest`, `sw.js` | Hacen que se pueda instalar y abrir sin internet |
-| `icon-*.png`, `favicon.png`, `apple-touch-icon.png` | Íconos |
+| `icon-*.png`, `favicon.png`, `apple-touch-icon.png` | Ícono de la app |
+| `logo-bust.png`, `logo-full.png` | El personaje que se ve adentro de la app |
 
 No hace falta instalar nada ni compilar: son archivos listos para subir tal cual.
 
@@ -97,10 +99,22 @@ El límite gratis alcanza para unas 100 búsquedas por día.
 - **Portadas:** en el menú ⋮ de una nota o de una carpeta, **Portada**. Elegís una foto de la galería, la encuadrás y listo. Las portadas viajan con la nube y entran en la copia de seguridad.
 - Con el teclado abierto, escribiendo en el bloc, se esconde la barra de arriba para que entren más renglones.
 
+## Rimas
+
+Con el bloc abierto, arriba del teclado aparece una barra con rimas. La palabra con la que rima es la última de la barra de arriba (o la que acabás de escribir si es la primera línea). Para cambiarla, tocá la palabra de la izquierda y elegí **Elegir otra palabra**. Tocar una sugerencia la escribe donde está el cursor (si venías escribiendo «det», completa «detalle»).
+
+- **Apagar/prender:** el botón **Rimas** del pie del bloc, o Ajustes → Rimas.
+- **Filtros** (el botón de la derecha de la barra): español o English; consonante, asonante o las dos (las asonantes salen con borde punteado); cantidad de sílabas (1, 2, 3, 4 o más); tipo de palabra (formal, informal, jerga, marcas, famosos y, dentro de famosos, videojuegos, música argentina, música de EE. UU., fútbol, historia, cine y series); y de dónde saco palabras (tus notas, internet).
+- **Mi diccionario:** tus propias palabras. Aparecen primero. Podés ponerles «cómo suena» (Nike → náiki) para que rimen bien aunque se escriban distinto. Entra en Exportar e Importar.
+- **Internet:** las rimas extra vienen de Datamuse (gratis). Lo ya buscado se guarda en el celular y sirve sin conexión. Datamuse va a pedir una clave a partir del 1 de febrero de 2027: cuando te la den, se pega en Rimas → Internet (Datamuse).
+- Los tipos de palabra (jerga, marcas, famosos) funcionan con las listas que trae la app y con tu diccionario. Las listas son un punto de partida: lo que falte lo agregás vos.
+
 ## Actualizar la app
 
 Subí los archivos nuevos al mismo repositorio de GitHub (**Add file → Upload files**; los que tienen el mismo nombre se reemplazan) y esperá un minuto. El link no cambia.
-Cada versión nueva trae `sw.js` con un número de caché distinto (`banger-maker-v2`, `v3`…): así los celulares bajan la versión nueva. Abrí la app, cerrala del todo y volvé a abrirla una o dos veces para que se actualice.
+Cada versión nueva trae `sw.js` con un número de caché distinto (`banger-maker-v3`, `v4`…): así los celulares bajan la versión nueva. Abrí la app, cerrala del todo y volvé a abrirla una o dos veces para que se actualice.
+
+**Versión 3:** ícono nuevo, personaje en el logo y en la pantalla vacía, y sugerencias de rimas. Todo lo anterior se mantiene. Si el ícono de la pantalla de inicio no cambia, Android a veces tarda: probá desinstalar la app y volver a instalarla (antes tocá Exportar en Ajustes por las dudas).
 
 **Versión 2:** nuevo diseño, reproductor persistente, fondos y portadas. Las notas, carpetas y la conexión con la nube de la versión 1 se mantienen. El tema «Claro» pasa a ser el estilo Acuarela.
 

@@ -2,8 +2,12 @@
 (() => {
 'use strict';
 
-const VERSION = '2.0.0';
-const K = { data: 'bm:data', settings: 'bm:settings', cloud: 'bm:cloud', dirty: 'bm:dirty' };
+const VERSION = '3.0.0';
+const K = { data: 'bm:data', settings: 'bm:settings', cloud: 'bm:cloud', dirty: 'bm:dirty', dict: 'bm:dict' };
+const RIMA_CATS = [['formal', 'Formal'], ['informal', 'Informal'], ['jerga', 'Jerga'], ['marcas', 'Marcas'], ['famosos', 'Famosos']];
+const RIMA_SUBS = [['videojuegos', 'Videojuegos'], ['musicaAR', 'Música argentina'], ['musicaUS', 'Música de EE. UU.'], ['futbol', 'Fútbol'], ['historicos', 'Historia'], ['cine', 'Cine y series']];
+const DICT_CATS = [['informal', 'Informal'], ['jerga', 'Jerga'], ['marcas', 'Marca'], ['famosos', 'Famoso o famosa'], ['formal', 'Formal']];
+const DEFAULT_RIMAS = { on: true, lang: 'es', mode: 'both', syl: [1, 2, 3, 4], cats: RIMA_CATS.map(c => c[0]), subs: RIMA_SUBS.map(c => c[0]), notas: true, net: true, flexS: true, dmKey: '' };
 const FB_BASE = 'https://www.gstatic.com/firebasejs/10.14.1/';
 const TAPES = ['#ffc93c', '#ff7a8a', '#6fe0b5', '#7fb2ff', '#c79bff', '#ffa95c'];
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5];
@@ -86,6 +90,7 @@ const ICONS = {
   cloud: '<path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 10.5 4 4 0 0 1 17.5 18z"/>',
   download: '<path d="M12 4v11M7.5 11l4.5 4.5 4.5-4.5M5 19h14"/>',
   upload: '<path d="M12 16V5M7.5 9L12 4.5 16.5 9M5 19h14"/>',
+  rhyme: '<circle cx="9" cy="12" r="5.5"/><circle cx="15" cy="12" r="5.5"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-8 9"/>'
 };
@@ -118,6 +123,10 @@ if (!storedSettings.style && storedSettings.theme) {
   settings.style = light ? 'acuarela' : 'noche';
 }
 delete settings.theme;
+settings.rimas = Object.assign({}, DEFAULT_RIMAS, storedSettings.rimas || {});
+['syl', 'cats', 'subs'].forEach(k => { if (!Array.isArray(settings.rimas[k])) settings.rimas[k] = DEFAULT_RIMAS[k].slice(); });
+let dict = lsGet(K.dict, []);
+if (!Array.isArray(dict)) dict = [];
 
 const liveNotes = () => db.notes.filter(n => !n.deleted);
 const liveFolders = () => db.folders.filter(f => !f.deleted);
@@ -241,8 +250,10 @@ function idb() {
   if (!idbP) {
     idbP = new Promise((res, rej) => {
       if (!window.indexedDB) { rej(new Error('sin idb')); return; }
-      const rq = indexedDB.open('banger-maker', 1);
-      rq.onupgradeneeded = () => rq.result.createObjectStore('img');
+      const rq = indexedDB.open('banger-maker', 2);
+      rq.onupgradeneeded = () => {
+        ['img', 'rimas'].forEach(n => { if (!rq.result.objectStoreNames.contains(n)) rq.result.createObjectStore(n); });
+      };
       rq.onsuccess = () => res(rq.result);
       rq.onerror = () => rej(rq.error);
       rq.onblocked = () => rej(new Error('bloqueada'));
@@ -250,11 +261,11 @@ function idb() {
   }
   return idbP;
 }
-async function idbDo(mode, fn) {
+async function idbDo(mode, fn, store = 'img') {
   const d = await idb();
   return new Promise((res, rej) => {
-    const tx = d.transaction('img', mode);
-    const rq = fn(tx.objectStore('img'));
+    const tx = d.transaction(store, mode);
+    const rq = fn(tx.objectStore(store));
     tx.oncomplete = () => res(rq && rq.result);
     tx.onerror = tx.onabort = () => rej(tx.error);
   });
@@ -611,7 +622,7 @@ function renderList() {
   const folders = liveFolders().sort((a, b) => a.name.localeCompare(b.name, 'es'));
   const loose = all.filter(n => !folderById(n.folderId)).sort(byDate);
   if (!folders.length && !loose.length) {
-    root.append(h('div', { class: 'empty-state' }, h('strong', null, 'Todavía no hay notas'),
+    root.append(h('div', { class: 'empty-state' }, h('img', { class: 'empty-char', src: 'logo-full.png', alt: '', width: 74, height: 156 }), h('strong', null, 'Todavía no hay notas'),
       'Creá una nota para escribir sobre un beat, o una carpeta para ordenarlas por tema.'));
     return;
   }
@@ -695,6 +706,7 @@ function setView(v) {
   updateHeader();
   syncStrip();
   updateAwake();
+  updateRhymeVisibility();
 }
 
 function showEditor(id) {
@@ -702,6 +714,7 @@ function showEditor(id) {
   if (!n) { showList(null); return; }
   if (E.note && E.note !== n) leaveEditor();
   E.note = n;
+  RB.pinned = null; RB.sig = '';
   setView('editor');
   titleInput().value = n.title;
   bodyInput().value = n.body;
@@ -1300,7 +1313,7 @@ function seg(options, current, onPick) {
 async function exportData() {
   const withCover = async it => (it.cover ? { ...it, coverData: await coverData(it.id) } : it);
   const payload = {
-    app: 'banger-maker', version: 2, exportedAt: new Date().toISOString(),
+    app: 'banger-maker', version: 3, exportedAt: new Date().toISOString(), dict,
     folders: await Promise.all(db.folders.map(withCover)),
     notes: await Promise.all(db.notes.map(withCover))
   };
@@ -1330,8 +1343,17 @@ function importData() {
       });
       merge(j.folders, db.folders, 'folder');
       merge(j.notes, db.notes, 'note');
+      let words = 0;
+      (Array.isArray(j.dict) ? j.dict : []).forEach(d => {
+        if (!d || typeof d.w !== 'string' || !d.w.trim()) return;
+        const lang = d.lang === 'en' ? 'en' : 'es';
+        if (dict.some(x => x.lang === lang && x.w.toLowerCase() === d.w.toLowerCase())) return;
+        dict.push({ id: uid(), w: d.w.trim().slice(0, 40), say: String(d.say || '').slice(0, 40), cat: DICT_CATS.some(c => c[0] === d.cat) ? d.cat : 'informal', lang, t: now() });
+        words++;
+      });
+      if (words) { saveDict(); RB.sig = ''; }
       persistNow(); cloudSchedule(500); refreshList();
-      toast(added ? `Se importaron ${added} elementos` : 'No había nada nuevo para importar');
+      toast(added || words ? `Se importó ${[added ? added + ' elementos' : '', words ? words + ' palabras del diccionario' : ''].filter(Boolean).join(' y ')}` : 'No había nada nuevo para importar');
     } catch { toast('Ese archivo no es una copia de Banger Maker'); }
   });
   input.click();
@@ -1439,6 +1461,10 @@ function openSettings() {
         h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'Letra'),
           seg([['mono', 'Máquina'], ['sans', 'Normal']], settings.font, v => { settings.font = v; applySettings(); saveSettings(); redo(); })),
         h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'Tamaño de letra'), size, sample)),
+      h('div', { class: 'set-group' }, h('h3', null, 'Rimas'),
+        h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'Sugerencias de rimas mientras escribís'),
+          seg([[true, 'Activadas'], [false, 'Apagadas']], !!settings.rimas.on, v => { settings.rimas.on = v; saveSettings(); updateRhymeVisibility(); redo(); })),
+        h('button', { class: 'btn btn-ghost btn-block', onclick: openRimasSheet }, icon('sliders', 20), 'Filtros y diccionario')),
       h('div', { class: 'set-group' }, h('h3', null, 'Beat'),
         h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'Repetir el beat cuando termina'),
           seg([[true, 'Sí'], [false, 'No']], settings.repeat, v => { settings.repeat = v; saveSettings(); redo(); }))),
@@ -1638,6 +1664,432 @@ setInterval(() => { if (cloud.cfg && cloud.user && dirty.size) cloudSchedule(0);
 
 
 
+/* ---------- rimas: sugerencias mientras escribís ---------- */
+const RM = window.Rimas;
+const RD = window.RIMAS_DATOS || { famosos: {} };
+const catLabel = id => (DICT_CATS.find(c => c[0] === id) || [0, id])[1];
+const RB = { sig: '', token: 0, timer: null, pinned: null, word: '' };
+let dictVer = 0;
+const saveDict = () => { lsSet(K.dict, dict); dictVer++; };
+
+/* ---- palabras que tengo: listas de la app + mi diccionario + lo que escribí en mis notas ---- */
+let SEED = null;
+function seedCands() {
+  if (SEED) return SEED;
+  SEED = [];
+  ['comun', 'formal', 'informal', 'jerga', 'marcas'].forEach(k => (RD[k] || []).forEach(e => SEED.push({ w: e.w, say: e.say, cat: k })));
+  Object.entries(RD.famosos || {}).forEach(([sub, list]) => list.forEach(e => SEED.push({ w: e.w, say: e.say, cat: 'famosos', sub })));
+  return SEED;
+}
+
+let seedSay = null;
+function sayFor(word) {
+  const k = word.toLowerCase();
+  const d = dict.find(x => x.lang === 'es' && x.say && x.w.toLowerCase() === k);
+  if (d) return d.say;
+  if (!seedSay) { seedSay = new Map(); seedCands().forEach(c => { if (c.say && !/\s/.test(c.w)) seedSay.set(c.w.toLowerCase(), c.say); }); }
+  return seedSay.get(k);
+}
+
+const noteWords = new Map();
+const wordsOf = text => new Set(text.toLowerCase().match(/[a-záéíóúüñ]{3,18}/g) || []);
+function notesVocab(partialCut) {
+  const all = new Set();
+  for (const n of liveNotes()) {
+    let ws;
+    if (E.note === n) ws = wordsOf(partialCut != null ? partialCut : n.body);
+    else {
+      const c = noteWords.get(n.id);
+      if (c && c.u === n.updatedAt) ws = c.ws;
+      else { ws = wordsOf(n.title + ' ' + n.body); noteWords.set(n.id, { u: n.updatedAt, ws }); }
+    }
+    ws.forEach(w => all.add(w));
+  }
+  return all;
+}
+
+/* ---- ¿con qué palabra rimo? ---- */
+const TIME_TAG = /^\s*\[\d{1,2}:\d{2}(?::\d{2})?\]\s*/;
+function lastWord(s) {
+  const m = s.replace(TIME_TAG, '').match(/(\p{L}+(?:['’]\p{L}+)*)[^\p{L}]*$/u);
+  return m ? m[1] : '';
+}
+function findTarget() {
+  const ta = bodyInput();
+  const v = ta.value;
+  const pos = ta.selectionStart == null ? v.length : ta.selectionStart;
+  const lines = v.slice(0, pos).split('\n');
+  const before = lines[lines.length - 1];
+  const prev = lines.length > 1 ? lastWord(lines[lines.length - 2]) : '';
+  const hasText = before.replace(TIME_TAG, '').trim().length > 0;
+  const partial = (before.match(/\p{L}+$/u) || [''])[0];
+  const cut = partial ? v.slice(0, pos - partial.length) + v.slice(pos) : v;
+  if (prev) return { word: prev, cut };            // estás escribiendo la barra que tiene que rimar con la de arriba
+  if (hasText) { const w = lastWord(before); return w ? { word: w, cut } : null; }
+  return null;
+}
+
+/* ---- internet: Datamuse (guarda lo ya buscado para usarlo sin conexión) ---- */
+const DM_URL = 'https://api.datamuse.com/words';
+const netMem = new Map();
+async function dmGet(params) {
+  const u = new URL(DM_URL);
+  Object.entries(params).forEach(([k, v]) => u.searchParams.set(k, v));
+  if (settings.rimas.dmKey) u.searchParams.set('k', settings.rimas.dmKey);
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 8000);
+  try {
+    const r = await fetch(u, { signal: ctl.signal });
+    if (!r.ok) throw new Error('http ' + r.status);
+    return await r.json();
+  } finally { clearTimeout(t); }
+}
+const freqOf = it => { const t = (it.tags || []).find(x => typeof x === 'string' && x.startsWith('f:')); return t ? parseFloat(t.slice(2)) || 0 : 0; };
+
+async function fetchEs(word, say, mode) {
+  const pats = [];
+  if (mode !== 'ason') pats.push(...RM.consonantPatterns(word, undefined, 3));
+  if (mode !== 'cons') pats.push(...RM.assonantPatterns(word, say).slice(0, 4));
+  if (!pats.length) return [];
+  const lists = await Promise.all(pats.map(p => dmGet({ v: 'es', sp: p, md: 'f', max: 600 }).catch(() => null)));
+  if (lists.every(l => l === null)) throw new Error('sin red');
+  const best = new Map();
+  lists.forEach(l => (l || []).forEach(it => {
+    const w = it.word;
+    if (typeof w !== 'string' || !/^[a-záéíóúüñ]{2,16}$/.test(w)) return;
+    const f = freqOf(it);
+    if (!best.has(w) || best.get(w) < f) best.set(w, f);
+  }));
+  return [...best].map(([w, f]) => ({ w, f })).sort((a, b) => b.f - a.f).slice(0, 1500);
+}
+
+async function fetchEn(word, mode) {
+  const [perf, near] = await Promise.all([
+    mode === 'ason' ? [] : dmGet({ rel_rhy: word, md: 'fs', max: 400 }),
+    mode === 'cons' ? [] : dmGet({ rel_nry: word, md: 'fs', max: 300 })
+  ]);
+  const conv = (l, rel) => l.filter(it => typeof it.word === 'string' && !/\s/.test(it.word))
+    .map(it => ({ w: it.word, n: it.numSyllables || 0, f: freqOf(it), rel }));
+  return conv(perf, 'cons').concat(conv(near, 'ason'));
+}
+
+async function rimasStore(mode, fn) { try { return await idbDo(mode, fn, 'rimas'); } catch { return null; } }
+async function netFor(word, say) {
+  const o = settings.rimas;
+  const key = `${o.lang}|${o.mode}|${norm(word)}`;
+  if (netMem.has(key)) return netMem.get(key);
+  const saved = await rimasStore('readonly', s => s.get(key));
+  const fresh = saved && now() - saved.t < 30 * 86400000;
+  if (fresh) { netMem.set(key, saved.d); return saved.d; }
+  if (!navigator.onLine) return saved ? saved.d : null;
+  try {
+    const d = o.lang === 'en' ? await fetchEn(word, o.mode) : await fetchEs(word, say, o.mode);
+    netMem.set(key, d);
+    rimasStore('readwrite', s => s.put({ t: now(), d }, key));
+    return d;
+  } catch { return saved ? saved.d : null; }
+}
+function rimasPrune() {
+  rimasStore('readwrite', s => {
+    const rq = s.openCursor();
+    rq.onsuccess = () => {
+      const c = rq.result;
+      if (!c) return;
+      if (!c.value || now() - c.value.t > 30 * 86400000) c.delete();
+      c.continue();
+    };
+    return rq;
+  });
+}
+
+/* ---- inglés: parecido por cómo termina la palabra (aproximado) ---- */
+function enKey(w) {
+  w = w.toLowerCase().replace(/[^a-z]/g, '');
+  const m = w.match(/[aeiouy]+[^aeiouy]+e$/) || w.match(/[aeiouy]+[^aeiouy]*$/);
+  return m ? m[0] : w;
+}
+function enSyl(w) {
+  w = w.toLowerCase().replace(/[^a-z]/g, '');
+  let n = (w.match(/[aeiouy]+/g) || []).length;
+  if (n > 1 && /[^aeiouy]e$/.test(w) && !/[^aeiouy]le$/.test(w)) n--;
+  return Math.max(1, n);
+}
+
+/* ---- armar la lista ---- */
+function wantedCats() {
+  const o = settings.rimas;
+  const cats = o.cats.slice();
+  if (cats.includes('formal') || cats.includes('informal')) cats.push('comun');
+  if (o.notas) cats.push('notas');
+  return cats;
+}
+
+function rankEs(word, net, cut) {
+  const o = settings.rimas;
+  const cands = dict.filter(d => d.lang === 'es').map(d => ({ w: d.w, say: d.say || undefined, cat: d.cat, mine: true }));
+  seedCands().forEach(c => cands.push(c));
+  if (o.notas) notesVocab(cut).forEach(w => cands.push({ w, cat: 'notas' }));
+  if (net) net.forEach(it => cands.push({ w: it.w, f: it.f, cat: 'comun' }));
+  return RM.rank({ w: word, say: sayFor(word) }, cands, {
+    mode: o.mode, syl: o.syl, cats: wantedCats(), subs: o.subs, flexS: !!o.flexS, limit: 70
+  }).items;
+}
+
+function rankEn(word, net, cut) {
+  const o = settings.rimas;
+  const tw = word.toLowerCase().replace(/’/g, "'"), tk = enKey(tw), tn = enSyl(tw);
+  const cats = wantedCats();
+  const perf = new Set(), nearS = new Set();
+  (net || []).forEach(it => (it.rel === 'cons' ? perf : nearS).add(it.w.toLowerCase()));
+  const seen = new Set([tw]);
+  const items = [];
+  const add = (w, cat, n, rel, extra) => {
+    const lw = w.toLowerCase();
+    if (seen.has(lw) || !rel) return;
+    if (o.mode === 'cons' && rel !== 'cons') return;
+    if (o.mode === 'ason' && rel !== 'ason') return;
+    if (cats.length && !cats.includes(cat)) return;
+    const nb = n >= 4 ? 4 : n;
+    if (o.syl.length && !o.syl.includes(nb)) return;
+    seen.add(lw);
+    let score = rel === 'cons' ? 100 : 50;
+    if (n === tn) score += 10;
+    score += extra.bonus || 0;
+    if (extra.f) score += Math.min(10, Math.log10(extra.f + 1) * 3);
+    items.push({ w, cat, n, rel, mine: !!extra.mine, score });
+  };
+  const relFor = lw => (perf.has(lw) || enKey(lw) === tk ? 'cons' : nearS.has(lw) ? 'ason' : null);
+  dict.filter(d => d.lang === 'en').forEach(d => {
+    const lw = d.w.toLowerCase();
+    if (/\s/.test(lw)) return;
+    add(d.w, d.cat, enSyl(lw), relFor(lw), { mine: true, bonus: 8 });
+  });
+  if (o.notas) notesVocab(cut).forEach(w => add(w, 'notas', enSyl(w), relFor(w), { bonus: 6 }));
+  (net || []).forEach(it => add(it.w, 'comun', it.n || enSyl(it.w), it.rel, { f: it.f }));
+  items.sort((a, b) => b.score - a.score || a.w.localeCompare(b.w));
+  return items.slice(0, 70);
+}
+
+/* ---- la barra ---- */
+function rhymeOn() { return !!settings.rimas.on && ui.view === 'editor'; }
+
+function updateRhymeVisibility() {
+  const show = rhymeOn();
+  const bar = $('#rhyme-bar');
+  if (bar) bar.hidden = !show;
+  const b = $('#btn-rhymes');
+  if (b) b.setAttribute('aria-pressed', String(!!settings.rimas.on));
+  if (show) scheduleRhyme(0, true);
+}
+
+function scheduleRhyme(delay, force) {
+  clearTimeout(RB.timer);
+  RB.timer = setTimeout(() => refreshRhyme(force), delay == null ? 160 : delay);
+}
+
+function renderRhymes(word, items, busy) {
+  const list = $('#rhyme-list');
+  if (!list) return;
+  const tb = $('#rhyme-target');
+  tb.replaceChildren(icon('rhyme', 17), h('span', { class: 'w' }, word ? truncate(word, 16) : 'Rimas'));
+  tb.classList.toggle('pinned', !!RB.pinned);
+  tb.setAttribute('aria-label', word ? `Rimar con ${word}. Tocá para elegir otra palabra` : 'Elegir una palabra para rimar');
+  const kids = [];
+  if (!word) kids.push(h('span', { class: 'rmsg' }, 'Escribí una barra y te sugiero rimas'));
+  else if (!items.length) {
+    kids.push(h('span', { class: 'rmsg' },
+      busy ? 'Buscando…' : !settings.rimas.cats.length ? 'Elegí algún tipo de palabra' : `Sin rimas con «${truncate(word, 18)}» con estos filtros`));
+  } else {
+    items.forEach(it => kids.push(h('button', {
+      class: 'rchip' + (it.rel === 'ason' ? ' ason' : '') + (it.mine ? ' mine' : ''), 'data-w': it.w, type: 'button'
+    }, it.w)));
+    if (busy) kids.push(h('span', { class: 'rmsg' }, '…'));
+  }
+  list.replaceChildren(...kids);
+  list.scrollLeft = 0;
+}
+
+async function refreshRhyme(force) {
+  if (!rhymeOn()) return;
+  const o = settings.rimas;
+  const tg = RB.pinned ? { word: RB.pinned, cut: null } : findTarget();
+  const word = tg ? tg.word : '';
+  const sig = [o.lang, o.mode, o.syl.join(), o.cats.join(), o.subs.join(), o.notas, o.net, o.flexS, word, dictVer].join('|');
+  if (sig === RB.sig && !force) return;
+  RB.sig = sig;
+  const my = ++RB.token;
+  if (!word) { renderRhymes('', [], false); return; }
+  const rank = net => (o.lang === 'en' ? rankEn(word, net, tg.cut) : rankEs(word, net, tg.cut));
+  const cached = netMem.get(`${o.lang}|${o.mode}|${norm(word)}`);
+  renderRhymes(word, rank(o.net ? cached : null), o.net && !cached);
+  if (!o.net || cached) return;
+  const net = await netFor(word, o.lang === 'es' ? sayFor(word) : undefined);
+  if (my !== RB.token || !rhymeOn()) return;
+  renderRhymes(word, rank(net), false);
+}
+
+/* tocar una sugerencia la escribe donde está el cursor */
+function insertRhyme(word) {
+  const ta = bodyInput();
+  const v = ta.value;
+  let s = ta.selectionStart, e = ta.selectionEnd;
+  if (s === e) {
+    const part = (v.slice(0, s).match(/\p{L}+$/u) || [''])[0];
+    if (part && norm(word).startsWith(norm(part))) s -= part.length;        // completa lo que venías escribiendo
+  }
+  const before = v.slice(0, s);
+  const lead = before && !/[\s(¿¡"“‘'\[-]$/.test(before) ? ' ' : '';
+  const text = lead + word;
+  ta.focus({ preventScroll: true });
+  ta.setSelectionRange(s, e);
+  let ok = false;
+  try { ok = document.execCommand('insertText', false, text); } catch { ok = false; }
+  if (!ok || ta.value === v) {
+    ta.value = before + text + v.slice(e);
+    const p = before.length + text.length;
+    ta.setSelectionRange(p, p);
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+}
+
+function targetMenu() {
+  menuSheet('Rimar con…', [
+    { icon: 'pencil', label: 'Elegir otra palabra', run: pinWord },
+    RB.pinned ? { icon: 'rhyme', label: 'Volver al automático', run: () => { RB.pinned = null; RB.sig = ''; scheduleRhyme(0); } } : null,
+    { icon: 'sliders', label: 'Filtros y diccionario', run: openRimasSheet }
+  ]);
+}
+async function pinWord() {
+  const v = await promptSheet({ title: 'Rimar con…', value: RB.pinned || RB.word || '', placeholder: 'Escribí una palabra', okLabel: 'Buscar rimas', maxLength: 30 });
+  if (!v) return;
+  const w = lastWord(v);
+  if (!w) { toast('Escribí una palabra con letras'); return; }
+  RB.pinned = w; RB.sig = ''; scheduleRhyme(0);
+}
+
+function bindRhymes() {
+  const ta = bodyInput();
+  ta.addEventListener('input', () => scheduleRhyme(180));
+  ['keyup', 'click', 'focus'].forEach(ev => ta.addEventListener(ev, () => scheduleRhyme(120)));
+  document.addEventListener('selectionchange', () => { if (document.activeElement === ta) scheduleRhyme(220); });
+  const bar = $('#rhyme-bar');
+  // tocar la barra no debe cerrar el teclado
+  bar.addEventListener('mousedown', e => { if (e.target.closest('button')) e.preventDefault(); });
+  $('#rhyme-list').addEventListener('click', e => { const c = e.target.closest('.rchip'); if (c) insertRhyme(c.dataset.w); });
+  $('#rhyme-target').addEventListener('click', targetMenu);
+  $('#rhyme-filter').addEventListener('click', openRimasSheet);
+  $('#btn-rhymes').addEventListener('click', () => {
+    settings.rimas.on = !settings.rimas.on;
+    saveSettings();
+    updateRhymeVisibility();
+    toast(settings.rimas.on ? 'Rimas activadas' : 'Rimas apagadas');
+  });
+}
+
+/* ---- hoja: filtros ---- */
+const fchip = (label, on, run) => h('button', { class: 'fchip', type: 'button', 'aria-pressed': String(!!on), onclick: run }, label);
+function toggleIn(arr, v) { const i = arr.indexOf(v); if (i < 0) arr.push(v); else arr.splice(i, 1); }
+
+function openRimasSheet() {
+  const o = settings.rimas;
+  const prev = sheet && sheet.kind === 'rimas' ? sheet.panel.scrollTop : 0;
+  const redo = () => { saveSettings(); RB.sig = ''; updateRhymeVisibility(); scheduleRhyme(0); openRimasSheet(); };
+  showSheet(panel => {
+    const key = h('input', { class: 'field', type: 'password', placeholder: 'Clave de Datamuse (opcional)', autocomplete: 'off', value: o.dmKey || '' });
+    key.addEventListener('change', () => { o.dmKey = key.value.trim(); saveSettings(); netMem.clear(); RB.sig = ''; scheduleRhyme(0); toast(o.dmKey ? 'Clave guardada' : 'Clave borrada'); });
+    panel.append(
+      h('h2', { class: 'sheet-title' }, 'Rimas'),
+      h('div', { class: 'set-group' },
+        h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'Sugerencias mientras escribís'),
+          seg([[true, 'Activadas'], [false, 'Apagadas']], !!o.on, v => { o.on = v; redo(); })),
+        h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'Idioma de la rima'),
+          seg([['es', 'Español'], ['en', 'English']], o.lang, v => { o.lang = v; redo(); })),
+        h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'Tipo de rima'),
+          seg([['cons', 'Consonante'], ['ason', 'Asonante'], ['both', 'Las dos']], o.mode, v => { o.mode = v; redo(); }),
+          h('p', { class: 'hint tight' }, 'Consonante: suena igual desde la vocal fuerte (plata – mata). Asonante: coinciden solo las vocales (plata – casa). Las asonantes salen con borde punteado.')),
+        h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'Sílabas de la palabra que rima'),
+          h('div', { class: 'fchips' }, [1, 2, 3, 4].map(n => fchip(n === 4 ? '4 o más' : String(n), o.syl.includes(n), () => { toggleIn(o.syl, n); redo(); })))),
+        h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'Tipo de palabra'),
+          h('div', { class: 'fchips' }, RIMA_CATS.map(([id, label]) => fchip(label, o.cats.includes(id), () => { toggleIn(o.cats, id); redo(); }))),
+          o.cats.includes('famosos')
+            ? h('div', { class: 'fchips sub' }, RIMA_SUBS.map(([id, label]) => fchip(label, o.subs.includes(id), () => { toggleIn(o.subs, id); redo(); })))
+            : null,
+          h('p', { class: 'hint tight' }, 'Famosos incluye personajes de videojuegos, músicos argentinos y de Estados Unidos, fútbol, historia y cine. El tipo se aplica a mis listas y a tu diccionario; lo que viene de internet cuenta como palabra común.')),
+        h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'De dónde saco palabras'),
+          h('div', { class: 'fchips' },
+            fchip('Mis notas', o.notas, () => { o.notas = !o.notas; redo(); }),
+            fchip('Internet', o.net, () => { o.net = !o.net; redo(); }))),
+        h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'Ignorar la S del final (casa – cosas)'),
+          seg([[true, 'Sí'], [false, 'No']], !!o.flexS, v => { o.flexS = v; redo(); }))),
+      h('div', { class: 'set-group' }, h('h3', null, 'Mi diccionario'),
+        h('p', { class: 'hint' }, `Tus propias palabras: jerga de tu barrio, nombres, marcas. Tenés ${dict.length}.`),
+        h('button', { class: 'btn btn-primary btn-block', onclick: openDictSheet }, icon('pencil', 20), 'Abrir mi diccionario')),
+      o.net ? h('div', { class: 'set-group' }, h('h3', null, 'Internet (Datamuse)'),
+        h('p', { class: 'hint' }, 'Las rimas de internet vienen de Datamuse y se guardan en el celular para usarlas sin conexión. Si Datamuse te pide una clave, pegala acá.'),
+        key) : null
+    );
+    panel.scrollTop = prev;
+  }, { kind: 'rimas' });
+}
+
+/* ---- hoja: mi diccionario ---- */
+const DRAFT = { w: '', say: '', cat: 'informal', lang: null };
+
+function openDictSheet() {
+  const prev = sheet && sheet.kind === 'dict' ? sheet.panel.scrollTop : 0;
+  const redo = () => openDictSheet();
+  showSheet(panel => {
+    if (!DRAFT.lang) DRAFT.lang = settings.rimas.lang;
+    const en = DRAFT.lang === 'en';
+    const wIn = h('input', { class: 'field', type: 'text', maxlength: 40, autocomplete: 'off', autocapitalize: 'none', enterkeyhint: 'done',
+      placeholder: en ? 'Palabra o nombre (ej.: Kendrick)' : 'Palabra o nombre (ej.: Duki)', value: DRAFT.w });
+    wIn.addEventListener('input', () => { DRAFT.w = wIn.value; });
+    const sIn = en ? null : h('input', { class: 'field', type: 'text', maxlength: 40, autocomplete: 'off', autocapitalize: 'none',
+      placeholder: 'Cómo suena (ej.: náiki)', value: DRAFT.say });
+    if (sIn) sIn.addEventListener('input', () => { DRAFT.say = sIn.value; });
+    const add = () => {
+      const w = wIn.value.trim().replace(/\s+/g, ' ');
+      if (w.length < 2 || !/\p{L}/u.test(w)) { toast('Escribí una palabra de al menos 2 letras'); wIn.focus(); return; }
+      const say = sIn ? sIn.value.trim() : '';
+      const k = w.toLowerCase();
+      const cur = dict.find(d => d.lang === DRAFT.lang && d.w.toLowerCase() === k);
+      if (cur) { cur.say = say; cur.cat = DRAFT.cat; cur.w = w; } else dict.push({ id: uid(), w, say, cat: DRAFT.cat, lang: DRAFT.lang, t: now() });
+      saveDict();
+      DRAFT.w = ''; DRAFT.say = '';
+      RB.sig = ''; scheduleRhyme(0);
+      toast(cur ? 'Palabra actualizada' : 'Palabra agregada');
+      redo();
+    };
+    wIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+    const mine = dict.slice().sort((a, b) => (b.t || 0) - (a.t || 0));
+    panel.append(
+      h('h2', { class: 'sheet-title' }, 'Mi diccionario'),
+      h('p', { class: 'hint tight' }, 'Lo que agregues acá aparece primero entre las sugerencias. En «Cómo suena» escribí la pronunciación como se diría en español, con tilde en la vocal fuerte (Nike → náiki).'),
+      h('div', { class: 'stack' },
+        wIn, sIn,
+        h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'Idioma'),
+          seg([['es', 'Español'], ['en', 'English']], DRAFT.lang, v => { DRAFT.lang = v; redo(); })),
+        h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'Tipo'),
+          h('div', { class: 'fchips' }, DICT_CATS.map(([id, label]) => fchip(label, DRAFT.cat === id, () => { DRAFT.cat = id; redo(); })))),
+        h('button', { class: 'btn btn-primary btn-block', onclick: add }, icon('plus', 20), 'Agregar')),
+      h('div', { class: 'set-group' }, h('h3', null, mine.length ? `Mis palabras (${mine.length})` : 'Todavía no agregaste palabras'),
+        h('div', { class: 'dict-list' }, mine.map(d => h('div', { class: 'dict-row' },
+          h('div', { class: 'dict-main' },
+            h('strong', null, d.w),
+            h('span', { class: 'dict-sub' }, [d.say ? `suena «${d.say}»` : '', catLabel(d.cat), d.lang === 'en' ? 'English' : 'Español'].filter(Boolean).join(' · '))),
+          h('button', { class: 'icon-btn sm', 'aria-label': 'Borrar ' + d.w, onclick: () => {
+            const i = dict.indexOf(d);
+            if (i < 0) return;
+            dict.splice(i, 1); saveDict(); RB.sig = ''; scheduleRhyme(0);
+            toast('Palabra borrada', { label: 'Deshacer', run: () => { dict.push(d); saveDict(); RB.sig = ''; scheduleRhyme(0); if (sheet && sheet.kind === 'dict') redo(); } });
+            redo();
+          } }, icon('trash', 20)))))),
+      h('div', { class: 'btn-row' }, h('button', { class: 'btn btn-ghost', onclick: openRimasSheet }, 'Volver a Rimas'))
+    );
+    panel.scrollTop = prev;
+  }, { kind: 'dict' });
+}
+
 /* ---------- navegación ---------- */
 function showList(folderId) {
   if (E.note) leaveEditor();
@@ -1722,6 +2174,7 @@ function bind() {
   bodyInput().addEventListener('blur', () => root.classList.remove('typing'));
 
   bindPlayer();
+  bindRhymes();
 
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { flushEdit(); if (cloud.cfg) cloudSchedule(0); }
@@ -1765,6 +2218,7 @@ function boot() {
   }
   registerSW();
   cloudInit();
+  setTimeout(rimasPrune, 5000);
 }
 
 boot();
