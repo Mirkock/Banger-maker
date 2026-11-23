@@ -1,6 +1,6 @@
 /* Banger Maker — service worker: deja abrir la app y las notas sin internet.
    Si cambiás algún archivo de la app, subí el número de versión de abajo. */
-const CACHE = 'banger-maker-v3';
+const CACHE = 'banger-maker-v4';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'favicon.png', 'apple-touch-icon.png', 'logo-bust.png', 'logo-full.png', 'rimas.js', 'rimas-datos.js'];
 
 self.addEventListener('install', e => {

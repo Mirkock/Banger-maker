@@ -109,10 +109,20 @@ Con el bloc abierto, arriba del teclado aparece una barra con rimas. La palabra 
 - **Internet:** las rimas extra vienen de Datamuse (gratis). Lo ya buscado se guarda en el celular y sirve sin conexión. Datamuse va a pedir una clave a partir del 1 de febrero de 2027: cuando te la den, se pega en Rimas → Internet (Datamuse).
 - Los tipos de palabra (jerga, marcas, famosos) funcionan con las listas que trae la app y con tu diccionario. Las listas son un punto de partida: lo que falte lo agregás vos.
 
+## Ordenar notas y carpetas
+
+En el inicio, a la derecha de **Carpetas** y de **Sin carpeta** (o **Notas**) hay un botón con el orden actual. Tocalo para elegir por **Modificación**, **Creación** o **Nombre**, y si querés las más nuevas o las más viejas primero (o A → Z / Z → A). Las carpetas y las notas se ordenan por separado, y el orden de las notas vale también dentro de las carpetas. Lo que elegís queda guardado.
+
+- Una carpeta cuenta como modificada cuando se cambió ella o cualquier nota de adentro.
+- Por nombre, los números van en orden natural (Álbum 2 antes que Álbum 10) y las notas sin título quedan siempre al final.
+- Si no tocás nada, sigue todo como antes: carpetas por nombre y notas por última modificación.
+
 ## Actualizar la app
 
 Subí los archivos nuevos al mismo repositorio de GitHub (**Add file → Upload files**; los que tienen el mismo nombre se reemplazan) y esperá un minuto. El link no cambia.
-Cada versión nueva trae `sw.js` con un número de caché distinto (`banger-maker-v3`, `v4`…): así los celulares bajan la versión nueva. Abrí la app, cerrala del todo y volvé a abrirla una o dos veces para que se actualice.
+Cada versión nueva trae `sw.js` con un número de caché distinto (`banger-maker-v4`, `v5`…): así los celulares bajan la versión nueva. Abrí la app, cerrala del todo y volvé a abrirla una o dos veces para que se actualice.
+
+**Versión 3.1:** orden de notas y carpetas por fecha de modificación, de creación o por nombre.
 
 **Versión 3:** ícono nuevo, personaje en el logo y en la pantalla vacía, y sugerencias de rimas. Todo lo anterior se mantiene. Si el ícono de la pantalla de inicio no cambia, Android a veces tarda: probá desinstalar la app y volver a instalarla (antes tocá Exportar en Ajustes por las dudas).
 

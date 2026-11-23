@@ -430,3 +430,9 @@ details ol { margin: 6px 0 0; padding-left: 20px; line-height: 1.55; font-size: 
 .dict-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .dict-main strong { font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dict-sub { color: var(--muted); font-size: 12.5px; }
+
+/* ---------- orden ---------- */
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sort-btn { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 8px; margin: -5px -6px -5px 0; border-radius: 10px; color: var(--muted); font-size: 12.5px; font-weight: 650; }
+.sort-btn .ic, .sort-btn svg { color: var(--accent-ink); flex: none; }
+.sort-btn:active { background: var(--surface-2); }

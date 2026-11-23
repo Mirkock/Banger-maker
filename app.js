@@ -2,11 +2,13 @@
 (() => {
 'use strict';
 
-const VERSION = '3.0.0';
+const VERSION = '3.1.0';
 const K = { data: 'bm:data', settings: 'bm:settings', cloud: 'bm:cloud', dirty: 'bm:dirty', dict: 'bm:dict' };
 const RIMA_CATS = [['formal', 'Formal'], ['informal', 'Informal'], ['jerga', 'Jerga'], ['marcas', 'Marcas'], ['famosos', 'Famosos']];
 const RIMA_SUBS = [['videojuegos', 'Videojuegos'], ['musicaAR', 'Música argentina'], ['musicaUS', 'Música de EE. UU.'], ['futbol', 'Fútbol'], ['historicos', 'Historia'], ['cine', 'Cine y series']];
 const DICT_CATS = [['informal', 'Informal'], ['jerga', 'Jerga'], ['marcas', 'Marca'], ['famosos', 'Famoso o famosa'], ['formal', 'Formal']];
+const SORT_BY = [['modified', 'Modificación'], ['created', 'Creación'], ['name', 'Nombre']];
+const DEFAULT_SORT = { notes: { by: 'modified', dir: 'desc' }, folders: { by: 'name', dir: 'asc' } };
 const DEFAULT_RIMAS = { on: true, lang: 'es', mode: 'both', syl: [1, 2, 3, 4], cats: RIMA_CATS.map(c => c[0]), subs: RIMA_SUBS.map(c => c[0]), notas: true, net: true, flexS: true, dmKey: '' };
 const FB_BASE = 'https://www.gstatic.com/firebasejs/10.14.1/';
 const TAPES = ['#ffc93c', '#ff7a8a', '#6fe0b5', '#7fb2ff', '#c79bff', '#ffa95c'];
@@ -72,6 +74,7 @@ const FOLDER = '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 
 const ICONS = {
   back: '<path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/>',
   more: '<circle cx="12" cy="5" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.7" fill="currentColor" stroke="none"/>',
+  sort: '<path d="M8 5v14M8 5L5 8.5M8 5l3 3.5M16 19V5M16 19l-3-3.5M16 19l3-3.5"/>',
   sliders: '<path d="M4 6h9M17 6h3"/><circle cx="15" cy="6" r="2"/><path d="M4 12h2M10 12h10"/><circle cx="8" cy="12" r="2"/><path d="M4 18h11M19 18h1"/><circle cx="17" cy="18" r="2"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   folder: FOLDER,
@@ -125,6 +128,14 @@ if (!storedSettings.style && storedSettings.theme) {
 delete settings.theme;
 settings.rimas = Object.assign({}, DEFAULT_RIMAS, storedSettings.rimas || {});
 ['syl', 'cats', 'subs'].forEach(k => { if (!Array.isArray(settings.rimas[k])) settings.rimas[k] = DEFAULT_RIMAS[k].slice(); });
+// cómo se ordenan las notas y las carpetas (cada una por separado)
+settings.sort = {};
+['notes', 'folders'].forEach(k => {
+  const s0 = Object.assign({}, DEFAULT_SORT[k], (storedSettings.sort || {})[k] || {});
+  if (!SORT_BY.some(x => x[0] === s0.by)) s0.by = DEFAULT_SORT[k].by;
+  if (s0.dir !== 'asc' && s0.dir !== 'desc') s0.dir = DEFAULT_SORT[k].dir;
+  settings.sort[k] = s0;
+});
 let dict = lsGet(K.dict, []);
 if (!Array.isArray(dict)) dict = [];
 
@@ -596,11 +607,9 @@ function renderList() {
           h('span', null, fmtDate(n.updatedAt)))),
       h('button', { class: 'icon-btn sm row-menu', 'aria-label': 'Opciones de la nota', onclick: () => noteMenu(n) }, icon('more', 20)));
   };
-  const byDate = (a, b) => b.updatedAt - a.updatedAt;
-
   if (q) {
-    const hitsF = liveFolders().filter(f => norm(f.name).includes(q));
-    const hitsN = all.filter(n => norm(n.title).includes(q) || norm(n.body).includes(q)).sort(byDate);
+    const hitsF = sortList(liveFolders().filter(f => norm(f.name).includes(q)), 'folders');
+    const hitsN = sortList(all.filter(n => norm(n.title).includes(q) || norm(n.body).includes(q)), 'notes');
     if (!hitsF.length && !hitsN.length) {
       root.append(h('div', { class: 'empty-state' }, h('strong', null, 'No hay resultados'), `No encontré nada con «${ui.query.trim()}».`));
       return;
@@ -612,22 +621,85 @@ function renderList() {
 
   if (inFolder) {
     if (folder.cover && coverUrl.has(folder.id)) root.append(h('div', { class: 'folder-cover', style: coverBg(folder.id) }));
-    const notes = all.filter(n => n.folderId === folder.id).sort(byDate);
+    const notes = sortList(all.filter(n => n.folderId === folder.id), 'notes');
     if (!notes.length) {
       root.append(h('div', { class: 'empty-state' }, h('strong', null, 'Esta carpeta está vacía'), 'Tocá «Nueva nota» para escribir sobre un beat.'));
-    } else root.append(...notes.map(rowFor));
+    } else root.append(notes.length > 1 ? sectionHead('Notas', 'notes', notes.length) : null, ...notes.map(rowFor));
     return;
   }
 
-  const folders = liveFolders().sort((a, b) => a.name.localeCompare(b.name, 'es'));
-  const loose = all.filter(n => !folderById(n.folderId)).sort(byDate);
+  const folders = sortList(liveFolders(), 'folders');
+  const loose = sortList(all.filter(n => !folderById(n.folderId)), 'notes');
   if (!folders.length && !loose.length) {
     root.append(h('div', { class: 'empty-state' }, h('img', { class: 'empty-char', src: 'logo-full.png', alt: '', width: 74, height: 156 }), h('strong', null, 'Todavía no hay notas'),
       'Creá una nota para escribir sobre un beat, o una carpeta para ordenarlas por tema.'));
     return;
   }
-  if (folders.length) root.append(h('div', { class: 'section-label' }, 'Carpetas'), tilesFor(folders));
-  if (loose.length) root.append(h('div', { class: 'section-label' }, folders.length ? 'Sin carpeta' : 'Notas'), ...loose.map(rowFor));
+  if (folders.length) root.append(sectionHead('Carpetas', 'folders', folders.length), tilesFor(folders));
+  if (loose.length) root.append(sectionHead(folders.length ? 'Sin carpeta' : 'Notas', 'notes', loose.length), ...loose.map(rowFor));
+}
+
+/* ---------- orden de notas y carpetas ---------- */
+function folderStamps() {
+  // una carpeta cuenta como modificada cuando se cambia ella o cualquiera de sus notas
+  const m = new Map();
+  liveFolders().forEach(f => m.set(f.id, f.updatedAt || 0));
+  liveNotes().forEach(n => { if (m.has(n.folderId) && (n.updatedAt || 0) > m.get(n.folderId)) m.set(n.folderId, n.updatedAt); });
+  return m;
+}
+
+function sortList(list, kind) {
+  const { by, dir } = settings.sort[kind];
+  const sign = dir === 'asc' ? 1 : -1;
+  const stamps = kind === 'folders' && by === 'modified' ? folderStamps() : null;
+  const nameOf = it => String(kind === 'folders' ? it.name : it.title || '').trim();
+  const when = it => (by === 'created' ? it.createdAt || 0 : stamps ? stamps.get(it.id) || 0 : it.updatedAt || 0);
+  return list.sort((a, b) => {
+    if (by === 'name') {
+      const na = nameOf(a), nb = nameOf(b);
+      if (!na !== !nb) return na ? -1 : 1;                 // lo que no tiene nombre va siempre al final
+      const c = na.localeCompare(nb, 'es', { numeric: true, sensitivity: 'base' });
+      if (c) return c * sign;
+    } else {
+      const c = when(a) - when(b);
+      if (c) return c * sign;
+    }
+    return (b.updatedAt || 0) - (a.updatedAt || 0);
+  });
+}
+
+function sortLabel(kind) {
+  const { by, dir } = settings.sort[kind];
+  if (by === 'name') return dir === 'asc' ? 'Nombre: A–Z' : 'Nombre: Z–A';
+  return (by === 'created' ? 'Creación' : 'Modificación') + (dir === 'desc' ? ': recientes' : ': antiguas');
+}
+
+function sectionHead(label, kind, count) {
+  const what = kind === 'folders' ? 'carpetas' : 'notas';
+  return h('div', { class: 'section-label section-head' },
+    h('span', null, label),
+    count > 1
+      ? h('button', { class: 'sort-btn', type: 'button', 'aria-label': `Ordenar ${what}. Ahora: ${sortLabel(kind)}`, onclick: () => openSortSheet(kind) },
+        icon('sort', 16), sortLabel(kind))
+      : null);
+}
+
+function openSortSheet(kind) {
+  const s = settings.sort[kind];
+  const set = (by, dir) => { s.by = by; s.dir = dir; saveSettings(); renderList(); openSortSheet(kind); };
+  showSheet(panel => {
+    panel.append(
+      h('h2', { class: 'sheet-title' }, kind === 'folders' ? 'Ordenar carpetas' : 'Ordenar notas'),
+      h('div', { class: 'set-group' },
+        h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'Ordenar por'),
+          seg(SORT_BY, s.by, v => { if (v !== s.by) set(v, v === 'name' ? 'asc' : 'desc'); })),
+        h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, 'Orden'),
+          seg(s.by === 'name' ? [['asc', 'A → Z'], ['desc', 'Z → A']] : [['desc', 'Más nuevas primero'], ['asc', 'Más viejas primero']], s.dir, v => set(s.by, v))),
+        kind === 'folders' && s.by === 'modified'
+          ? h('p', { class: 'hint tight' }, 'La fecha de una carpeta es la última vez que se cambió ella o cualquiera de las notas de adentro.')
+          : null,
+        s.by === 'name' ? h('p', { class: 'hint tight' }, 'Lo que no tiene nombre queda siempre al final.') : null));
+  }, { kind: 'sort' });
 }
 
 function tilesFor(folders) {
